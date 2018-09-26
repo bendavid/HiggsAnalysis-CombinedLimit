@@ -2,6 +2,7 @@
 import re
 from sys import argv, stdout, stderr, exit, modules
 from optparse import OptionParser
+import multiprocessing
 
 import tensorflow as tf
 
@@ -17,6 +18,7 @@ import h5py
 import h5py_cache
 from HiggsAnalysis.CombinedLimit.tfh5pyutils import maketensor,makesparsetensor
 from HiggsAnalysis.CombinedLimit.tfsparseutils import simple_sparse_tensor_dense_matmul, simple_sparse_slice0begin, simple_sparse_to_dense, SimpleSparseTensor
+from HiggsAnalysis.CombinedLimit.lsr1trustobs import SR1TrustExact
 import scipy
 import math
 import time
@@ -278,8 +280,13 @@ if nbinsmasked>0:
   outputs.append(pmaskedexp)
   outputs.append(pmaskedexpnorm)
 
-grad = tf.gradients(l,x,gate_gradients=True)[0]
-hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=1,back_prop=False)
+nthreadshess = options.nThreads
+if nthreadshess<0:
+  nthreadshess = multiprocessing.cpu_count()
+nthreadshess = min(nthreadshess,nparms)
+
+grad = tf.gradients(l,x,gate_gradients=True)[0]  
+hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
 
 eigvals = tf.self_adjoint_eigvals(hessian)
 mineigv = tf.reduce_min(eigvals)
@@ -290,7 +297,7 @@ edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessian,transpose_a=True),gradcol)
 
 invhessianouts = []
 for output in outputs:
-  jacout = jacobian(tf.concat([output,theta],axis=0),x,gate_gradients=True,parallel_iterations=1,back_prop=False)
+  jacout = jacobian(tf.concat([output,theta],axis=0),x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
   invhessianout = tf.matmul(jacout,tf.matmul(invhessian,jacout,transpose_b=True))
   invhessianouts.append(invhessianout)
 
@@ -306,7 +313,9 @@ ub = np.concatenate((np.inf*np.ones([npoi],dtype=dtype),np.inf*np.ones([nsyst],d
 xtol = np.finfo(dtype).eps
 edmtol = math.sqrt(xtol)
 btol = 1e-8
-minimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)}, options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
+tfminimizer = SR1TrustExact(l,x,grad)
+opinit = tfminimizer.initialize(l,x,grad,hessian)
+opmin = tfminimizer.minimize(l,x,grad)
 
 scanvars = {}
 scannames = []
@@ -359,23 +368,23 @@ tree.Branch('errstatus',terrstatus,'errstatus/I')
 tscanidx = array('i',[0])
 tree.Branch('scanidx',tscanidx,'scanidx/I')
 
-tedmval = array('f',[0.])
-tree.Branch('edmval',tedmval,'edmval/F')
+tedmval = array('d',[0.])
+tree.Branch('edmval',tedmval,'edmval/D')
 
-tnllval = array('f',[0.])
-tree.Branch('nllval',tnllval,'nllval/F')
+tnllval = array('d',[0.])
+tree.Branch('nllval',tnllval,'nllval/D')
 
-tnllvalfull = array('f',[0.])
-tree.Branch('nllvalfull',tnllvalfull,'nllvalfull/F')
+tnllvalfull = array('d',[0.])
+tree.Branch('nllvalfull',tnllvalfull,'nllvalfull/D')
 
-tdnllval = array('f',[0.])
-tree.Branch('dnllval',tdnllval,'dnllval/F')
+tdnllval = array('d',[0.])
+tree.Branch('dnllval',tdnllval,'dnllval/D')
 
-tchisq = array('f',[0.])
-tree.Branch('chisq', tchisq, 'chisq/F')
+tchisq = array('d',[0.])
+tree.Branch('chisq', tchisq, 'chisq/D')
 
-tchisqpartial = array('f',[0.])
-tree.Branch('chisqpartial', tchisqpartial, 'chisqpartial/F')
+tchisqpartial = array('d',[0.])
+tree.Branch('chisqpartial', tchisqpartial, 'chisqpartial/D')
 
 tndof = array('i',[0])
 tree.Branch('ndof',tndof,'ndof/I')
@@ -479,10 +488,23 @@ outvalsgens,thetavalsgen = sess.run([outputs,theta])
 
 #all caches should be filled by now
 
+def minimize():
+  sess.run(opinit)
+  ifit = 0
+  while True:
+    isconverged,_ = sess.run(opmin)
+    if options.fitverbose > 2:
+      lval, gmagval, e0val, trval = sess.run([tfminimizer.loss_old, tfminimizer.grad_old_mag, tfminimizer.e0, tfminimizer.trustradius])
+      print('Iteration %d, loss = %.6f, |g| = %e, lowest eigenvalue = %e, trustradius = %e' % (ifit,lval,gmagval,e0val,trval))
+    if isconverged:
+      break
+    
+    ifit += 1
+
 #prefit to data if needed
 if options.toys>0 and options.toysFrequentist and not options.bypassFrequentistFit:  
   sess.run(nexpnomassign)
-  ret = minimizer.minimize(sess)
+  minimize()
   xv = sess.run(x)
 
 for itoy in range(ntoys):
@@ -555,7 +577,7 @@ for itoy in range(ntoys):
     exit()
   
   if dofit:
-    ret = minimizer.minimize(sess)
+    minimize()
 
   #get fit output
   xval, outvalss, thetavals, theta0vals, nllval, nllvalfull = sess.run([x,outputs,theta,theta0,l,lfull])
