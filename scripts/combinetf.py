@@ -2,6 +2,7 @@
 import re
 from sys import argv, stdout, stderr, exit, modules
 from optparse import OptionParser
+import multiprocessing
 
 import tensorflow as tf
 
@@ -17,6 +18,7 @@ import h5py
 import h5py_cache
 from HiggsAnalysis.CombinedLimit.tfh5pyutils import maketensor,makesparsetensor
 from HiggsAnalysis.CombinedLimit.tfsparseutils import simple_sparse_tensor_dense_matmul, simple_sparse_slice0begin, simple_sparse_to_dense, SimpleSparseTensor
+from HiggsAnalysis.CombinedLimit.lsr1trustobs import SR1TrustExact
 import scipy
 import math
 import time
@@ -54,6 +56,7 @@ parser.add_option("","--POIMode", default="mu",type="string", help="mode for POI
 parser.add_option("","--nonNegativePOI", default=True, action='store_true', help="force signal strengths to be non-negative")
 parser.add_option("","--POIDefault", default=1., type=float, help="mode for POI's")
 parser.add_option("","--doBenchmark", default=False, action='store_true', help="run benchmarks")
+parser.add_option("","--saveHists", default=False, action='store_true', help="run benchmarks")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -198,6 +201,13 @@ if sparse:
   snormnormmasked0 = simple_sparse_to_dense(snormnormmasked0_sparse)
   snormnormmasked = snormnormmasked0[:,:nsignals]
   
+  #TODO consider doing this one column at a time to save memory
+  if options.saveHists:
+    ernorm = tf.reshape(rnorm,[1,-1])
+    normfull = ernorm*simple_sparse_to_dense(snormnorm_sparse)
+    nexpsig = tf.reduce_sum(normfull[:,:nsignals],axis=-1)
+    nexpbkg = tf.reduce_sum(normfull[:,nsignals:],axis=-1)
+  
 else:
   #matrix encoding effect of nuisance parameters
   #memory efficient version (do summation together with multiplication in a single tensor contraction step)
@@ -230,6 +240,12 @@ else:
   nexpfull = tf.squeeze(nexpfull,-1)
 
   snormnormmasked = snormnorm[nbins:,:nsignals]
+  
+  if options.saveHists:
+    ernorm = tf.reshape(rnorm,[1,-1])
+    normfull = ernorm*snormnorm
+    nexpsig = tf.reduce_sum(normfull[:,:nsignals],axis=-1)
+    nexpbkg = tf.reduce_sum(normfull[:,nsignals:],axis=-1)
   
 pmaskedexp = r*tf.reduce_sum(snormnormmasked,axis=0)
 
@@ -278,8 +294,13 @@ if nbinsmasked>0:
   outputs.append(pmaskedexp)
   outputs.append(pmaskedexpnorm)
 
-grad = tf.gradients(l,x,gate_gradients=True)[0]
-hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=1,back_prop=False)
+nthreadshess = options.nThreads
+if nthreadshess<0:
+  nthreadshess = multiprocessing.cpu_count()
+nthreadshess = min(nthreadshess,nparms)
+
+grad = tf.gradients(l,x,gate_gradients=True)[0]  
+hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
 
 eigvals = tf.self_adjoint_eigvals(hessian)
 mineigv = tf.reduce_min(eigvals)
@@ -290,7 +311,7 @@ edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessian,transpose_a=True),gradcol)
 
 invhessianouts = []
 for output in outputs:
-  jacout = jacobian(tf.concat([output,theta],axis=0),x,gate_gradients=True,parallel_iterations=1,back_prop=False)
+  jacout = jacobian(tf.concat([output,theta],axis=0),x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
   invhessianout = tf.matmul(jacout,tf.matmul(invhessian,jacout,transpose_b=True))
   invhessianouts.append(invhessianout)
 
@@ -306,7 +327,9 @@ ub = np.concatenate((np.inf*np.ones([npoi],dtype=dtype),np.inf*np.ones([nsyst],d
 xtol = np.finfo(dtype).eps
 edmtol = math.sqrt(xtol)
 btol = 1e-8
-minimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)}, options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
+tfminimizer = SR1TrustExact(l,x,grad)
+opinit = tfminimizer.initialize(l,x,grad,hessian)
+opmin = tfminimizer.minimize(l,x,grad)
 
 scanvars = {}
 scannames = []
@@ -359,23 +382,23 @@ tree.Branch('errstatus',terrstatus,'errstatus/I')
 tscanidx = array('i',[0])
 tree.Branch('scanidx',tscanidx,'scanidx/I')
 
-tedmval = array('f',[0.])
-tree.Branch('edmval',tedmval,'edmval/F')
+tedmval = array('d',[0.])
+tree.Branch('edmval',tedmval,'edmval/D')
 
-tnllval = array('f',[0.])
-tree.Branch('nllval',tnllval,'nllval/F')
+tnllval = array('d',[0.])
+tree.Branch('nllval',tnllval,'nllval/D')
 
-tnllvalfull = array('f',[0.])
-tree.Branch('nllvalfull',tnllvalfull,'nllvalfull/F')
+tnllvalfull = array('d',[0.])
+tree.Branch('nllvalfull',tnllvalfull,'nllvalfull/D')
 
-tdnllval = array('f',[0.])
-tree.Branch('dnllval',tdnllval,'dnllval/F')
+tdnllval = array('d',[0.])
+tree.Branch('dnllval',tdnllval,'dnllval/D')
 
-tchisq = array('f',[0.])
-tree.Branch('chisq', tchisq, 'chisq/F')
+tchisq = array('d',[0.])
+tree.Branch('chisq', tchisq, 'chisq/D')
 
-tchisqpartial = array('f',[0.])
-tree.Branch('chisqpartial', tchisqpartial, 'chisqpartial/F')
+tchisqpartial = array('d',[0.])
+tree.Branch('chisqpartial', tchisqpartial, 'chisqpartial/D')
 
 tndof = array('i',[0])
 tree.Branch('ndof',tndof,'ndof/I')
@@ -479,10 +502,47 @@ outvalsgens,thetavalsgen = sess.run([outputs,theta])
 
 #all caches should be filled by now
 
+def minimize():
+  sess.run(opinit)
+  ifit = 0
+  while True:
+    isconverged,_ = sess.run(opmin)
+    if options.fitverbose > 2:
+      lval, gmagval, e0val, trval = sess.run([tfminimizer.loss_old, tfminimizer.grad_old_mag, tfminimizer.e0, tfminimizer.trustradius])
+      print('Iteration %d, loss = %.6f, |g| = %e, lowest eigenvalue = %e, trustradius = %e' % (ifit,lval,gmagval,e0val,trval))
+    if isconverged:
+      break
+    
+    ifit += 1
+
+def fillHists(tag):
+  hists = []
+
+  normfullval, nexpfullval, nexpsigval, nexpbkgval = sess.run([normfull,nexpfull,nexpsig,nexpbkg])
+  
+  expfullHist = ROOT.TH1D('expfull_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+  hists.append(expfullHist)
+  array2hist(nexpfullval,expfullHist)
+  
+  expsigHist = ROOT.TH1D('expsig_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+  hists.append(expsigHist)
+  array2hist(nexpsigval,expsigHist)
+  
+  expbkgHist = ROOT.TH1D('expbkg_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+  hists.append(expbkgHist)
+  array2hist(nexpbkgval,expbkgHist)
+  
+  for iproc,proc in enumerate(procs):
+    expHist = ROOT.TH1D('expproc_%s_%s' % (proc,tag),'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+    hists.append(expHist)
+    array2hist(normfullval[:,iproc], expHist)
+      
+  return hists
+
 #prefit to data if needed
 if options.toys>0 and options.toysFrequentist and not options.bypassFrequentistFit:  
   sess.run(nexpnomassign)
-  ret = minimizer.minimize(sess)
+  minimize()
   xv = sess.run(x)
 
 for itoy in range(ntoys):
@@ -554,8 +614,15 @@ for itoy in range(ntoys):
     
     exit()
   
+  if options.saveHists and not options.toys > 1:
+    nobsval = sess.run(nobs)
+    obsHist = ROOT.TH1D('obs','',nbins,-0.5, float(nbins)-0.5)
+    array2hist(nobsval, obsHist)
+    
+    prefithists = fillHists('prefit')
+  
   if dofit:
-    ret = minimizer.minimize(sess)
+    minimize()
 
   #get fit output
   xval, outvalss, thetavals, theta0vals, nllval, nllvalfull = sess.run([x,outputs,theta,theta0,l,lfull])
@@ -629,6 +696,9 @@ for itoy in range(ntoys):
   
     outminosupd[outname] = minoserrsup
     outminosdownd[outname] = minoserrsdown
+
+  if options.saveHists and not options.toys > 1:
+    postfithists = fillHists('postfit')
 
   for var in options.minos:
     print("running minos-like algorithm for %s" % var)
