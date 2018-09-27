@@ -56,6 +56,7 @@ parser.add_option("","--POIMode", default="mu",type="string", help="mode for POI
 parser.add_option("","--nonNegativePOI", default=True, action='store_true', help="force signal strengths to be non-negative")
 parser.add_option("","--POIDefault", default=1., type=float, help="mode for POI's")
 parser.add_option("","--doBenchmark", default=False, action='store_true', help="run benchmarks")
+parser.add_option("","--saveHists", default=False, action='store_true', help="run benchmarks")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -200,6 +201,13 @@ if sparse:
   snormnormmasked0 = simple_sparse_to_dense(snormnormmasked0_sparse)
   snormnormmasked = snormnormmasked0[:,:nsignals]
   
+  #TODO consider doing this one column at a time to save memory
+  if options.saveHists:
+    ernorm = tf.reshape(rnorm,[1,-1])
+    normfull = ernorm*simple_sparse_to_dense(snormnorm_sparse)
+    nexpsig = tf.reduce_sum(normfull[:,:nsignals],axis=-1)
+    nexpbkg = tf.reduce_sum(normfull[:,nsignals:],axis=-1)
+  
 else:
   #matrix encoding effect of nuisance parameters
   #memory efficient version (do summation together with multiplication in a single tensor contraction step)
@@ -232,6 +240,12 @@ else:
   nexpfull = tf.squeeze(nexpfull,-1)
 
   snormnormmasked = snormnorm[nbins:,:nsignals]
+  
+  if options.saveHists:
+    ernorm = tf.reshape(rnorm,[1,-1])
+    normfull = ernorm*snormnorm
+    nexpsig = tf.reduce_sum(normfull[:,:nsignals],axis=-1)
+    nexpbkg = tf.reduce_sum(normfull[:,nsignals:],axis=-1)
   
 pmaskedexp = r*tf.reduce_sum(snormnormmasked,axis=0)
 
@@ -501,6 +515,30 @@ def minimize():
     
     ifit += 1
 
+def fillHists(tag):
+  hists = []
+
+  normfullval, nexpfullval, nexpsigval, nexpbkgval = sess.run([normfull,nexpfull,nexpsig,nexpbkg])
+  
+  expfullHist = ROOT.TH1D('expfull_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+  hists.append(expfullHist)
+  array2hist(nexpfullval,expfullHist)
+  
+  expsigHist = ROOT.TH1D('expsig_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+  hists.append(expsigHist)
+  array2hist(nexpsigval,expsigHist)
+  
+  expbkgHist = ROOT.TH1D('expbkg_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+  hists.append(expbkgHist)
+  array2hist(nexpbkgval,expbkgHist)
+  
+  for iproc,proc in enumerate(procs):
+    expHist = ROOT.TH1D('expproc_%s_%s' % (proc,tag),'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+    hists.append(expHist)
+    array2hist(normfullval[:,iproc], expHist)
+      
+  return hists
+
 #prefit to data if needed
 if options.toys>0 and options.toysFrequentist and not options.bypassFrequentistFit:  
   sess.run(nexpnomassign)
@@ -575,6 +613,13 @@ for itoy in range(ntoys):
     print("%d hessian evals in %f seconds, %f seconds per eval" % (neval,t,t/max(1,neval)))
     
     exit()
+  
+  if options.saveHists and not options.toys > 1:
+    nobsval = sess.run(nobs)
+    obsHist = ROOT.TH1D('obs','',nbins,-0.5, float(nbins)-0.5)
+    array2hist(nobsval, obsHist)
+    
+    prefithists = fillHists('prefit')
   
   if dofit:
     minimize()
@@ -651,6 +696,9 @@ for itoy in range(ntoys):
   
     outminosupd[outname] = minoserrsup
     outminosdownd[outname] = minoserrsdown
+
+  if options.saveHists and not options.toys > 1:
+    postfithists = fillHists('postfit')
 
   for var in options.minos:
     print("running minos-like algorithm for %s" % var)
