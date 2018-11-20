@@ -15,6 +15,7 @@ from tensorflow.python.ops import gradients
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.contrib.opt import ExternalOptimizerInterface
+from tensorflow.python.util import nest
 
 from scipy.optimize import SR1, LinearConstraint, NonlinearConstraint, Bounds
 
@@ -64,7 +65,7 @@ def jacobian(ys,
   gradient = array_ops.reshape(gradient, [-1])
 
   # Declare an iterator and tensor array loop variables for the gradients.
-  n = array_ops.size(x)
+  n = array_ops.size(gradient)
   loop_vars = [
       array_ops.constant(0, dtypes.int32),
       tensor_array_ops.TensorArray(x.dtype, n)
@@ -80,11 +81,63 @@ def jacobian(ys,
       back_prop = back_prop,
   )
 
+  _shapey = array_ops.shape(ys)
   _shape = array_ops.shape(x)
   _reshaped_hessian = array_ops.reshape(hessian.stack(),
-                                        array_ops.concat((_shape, _shape), 0))
+                                        array_ops.concat((_shapey, _shape), 0))
   #hessians.append(_reshaped_hessian)
   return _reshaped_hessian
+
+
+def sum_loop(loop_fn, loop_fn_accumulators, iters, parallel_iterations=10, back_prop=True):
+  """Runs `loop_fn` `iters` times and sums the outputs.
+  Runs `loop_fn` `iters` times, with input values from 0 to `iters - 1`, and
+  sums corresponding outputs of the different runs.
+  Args:
+    loop_fn: A function that takes an int32 scalar tf.Tensor object representing
+      the iteration number, and returns a possibly nested structure of tensor
+      objects. The shape of these outputs should not depend on the input.
+    loop_fn_dtypes: dtypes for the outputs of loop_fn.
+    iters: Number of iterations for which to run loop_fn.
+  Returns:
+    Returns a nested structure of stacked output tensor objects with the same
+    nested structure as the output of `loop_fn`.
+  """
+
+  flat_loop_fn_accumulators = nest.flatten(loop_fn_accumulators)
+  is_none_list = []
+
+  def while_body(i, *ta_list):
+    """Body of while loop."""
+    fn_output = nest.flatten(loop_fn(i))
+    if len(fn_output) != len(flat_loop_fn_accumulators):
+      raise ValueError(
+          "Number of expected outputs, %d, does not match the number of "
+          "actual outputs, %d, from loop_fn" % (len(flat_loop_fn_accumulators),
+                                                len(fn_output)))
+    outputs = []
+    del is_none_list[:]
+    is_none_list.extend([x is None for x in fn_output])
+    for out, ta in zip(fn_output, ta_list):
+      # TODO(agarwal): support returning Operation objects from loop_fn.
+      if out is not None:
+        ta = ta + out
+      outputs.append(ta)
+    return tuple([i + 1] + outputs)
+
+  ta_list = control_flow_ops.while_loop(
+      lambda i, *ta: i < iters, while_body, [0] + [
+          accumulator
+          for accumulator in flat_loop_fn_accumulators
+      ],parallel_iterations=parallel_iterations, back_prop=back_prop)[1:]
+
+  # TODO(rachelim): enable this for sparse tensors
+
+  output = [None if is_none else ta
+            for ta, is_none in zip(ta_list, is_none_list)]
+  return nest.pack_sequence_as(loop_fn_accumulators, output)
+
+
 
 class ScipyTROptimizerInterface(ExternalOptimizerInterface):
 

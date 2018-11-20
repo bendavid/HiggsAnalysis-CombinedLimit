@@ -41,6 +41,7 @@ parser.add_option("","--maskedChan", default=[], type="string",action="append", 
 parser.add_option("-S","--doSystematics", type=int, default=1, help="enable systematics")
 parser.add_option("","--chunkSize", type=int, default=4*1024**2, help="chunk size for hd5fs storage")
 parser.add_option("", "--sparse", default=False, action='store_true',  help="Store normalization and systematics arrays as sparse tensors")
+parser.add_option("", "--scaleMaskedYields", type=float, default=1.,  help="Scaling factor for yields in masked channels")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -132,9 +133,10 @@ print("nbins = %d, nbinsfull = %d, nproc = %d, nsyst = %d" % (nbins,nbinsfull,np
 
 #fill data, expected yields, and kappas into HDF5 file (with chunked storage and compression)
 
-#fill data, expected yields, and kappas into numpy arrays
+#fill data, expected yields with information about statistical uncertainties, and kappas into numpy arrays
 
 #n.b data and expected have shape [nbins]
+#sumw and sumw2 keep track of total nominal statistical uncertainty per bin and have shape [nbins]
 
 #norm has shape [nbinsfull, nproc] and keeps track of expected normalization
 
@@ -145,7 +147,11 @@ print("nbins = %d, nbinsfull = %d, nproc = %d, nsyst = %d" % (nbins,nbinsfull,np
 
 #n.b, in case of masked channels, nbinsfull includes the masked channels where nbins does not
 
+nentries = 0
+
 data_obs = np.zeros([nbins], dtype)
+sumw = np.zeros([nbins], dtype)
+sumw2 = np.zeros([nbins], dtype)
 
 if options.sparse:
   maxsparseidx = max(nbinsfull*nproc,2*nsyst)
@@ -198,16 +204,40 @@ for chan in chans:
     #get histogram, convert to np array with desired type, and exclude underflow/overflow bins
     norm_chan_hist = MB.getShape(chan,proc)
     norm_chan = hist2array(norm_chan_hist, include_overflow=False).astype(dtype)
+    if not chan in options.maskedChan:
+      if (norm_chan_hist.GetSumw2().GetSize()>0):
+        print("proper uncertainties")
+        sumw2_chan_hist = norm_chan_hist.Clone()
+        sumw2_chan_hist.Set(sumw2_chan_hist.GetSumw2().GetSize(), sumw2_chan_hist.GetSumw2().GetArray())
+        sumw2_chan = hist2array(sumw2_chan_hist, include_overflow=False).astype(dtype)
+        sumw2_chan_hist.Delete()
+      else:
+        print("fallback uncertainties")
+        nentries_chan = (norm_chan_hist.GetEntries()/norm_chan_hist.GetSumOfWeights())*normchan
+        sumw2_chan = nentries_chan*np.square(normchan/nentries_chan)
+        nentries_chan = None
     norm_chan_hist.Delete()
+    
     if norm_chan.shape[0] != nbinschan:
       raise Exception("Mismatch between number of bins in channel for data and template")
     
     if not options.allowNegativeExpectation:
       norm_chan = np.maximum(norm_chan,0.)
+
+    if not chan in options.maskedChan:
+      sumw[ibin:ibin+nbinschan] += norm_chan
+      sumw2[ibin:ibin+nbinschan] += sumw2_chan
+      sumw2chan = None
+    
+    if chan in options.maskedChan:
+      norm_chan_scaled = options.scaleMaskedYields*norm_chan
+    else:
+      norm_chan_scaled = norm_chan
+    
     
     if options.sparse:
-      norm_chan_indices = np.transpose(np.nonzero(norm_chan))
-      norm_chan_values = np.reshape(norm_chan[norm_chan_indices],[-1])
+      norm_chan_indices = np.transpose(np.nonzero(norm_chan_scaled))
+      norm_chan_values = np.reshape(norm_chan_scaled[norm_chan_indices],[-1])
             
       nvals_chan = len(norm_chan_values)
       oldlength = norm_sparse_size
@@ -224,12 +254,13 @@ for chan in chans:
       norm_sparse_values[oldlength:norm_sparse_size] = norm_chan_values
       norm_chan_values = None
       
-      norm_chan_idx_map = np.cumsum(np.not_equal(norm_chan,0.)) - 1 + oldlength
+      norm_chan_idx_map = np.cumsum(np.not_equal(norm_chan_scaled,0.)) - 1 + oldlength
 
     else:
       #write to (dense) output array
-      norm[ibin:ibin+nbinschan,iproc] = norm_chan
-        
+      norm[ibin:ibin+nbinschan,iproc] = norm_chan_scaled
+      
+    norm_chan_scaled = None
     
     for isyst,syst in enumerate(DC.systs[:nsyst]):
       name = syst[0]
@@ -389,6 +420,11 @@ if options.sparse:
   logk_sparse_values = logk_sparse_values[logk_sort_indices]
   logk_sort_indices = None
 
+#compute poisson parameter for Barlow-Beeston bin-by-bin statistical uncertainties
+kstat = np.square(sumw)/sumw2
+#numerical protection to avoid poorly defined constraint
+kstat = np.where(np.equal(sumw,0.), 1., kstat)
+
 #write results to hdf5 file
 
 procSize = nproc*np.dtype(dtype).itemsize
@@ -421,6 +457,9 @@ nbytes = 0
 
 nbytes += writeFlatInChunks(data_obs, f, "hdata_obs", maxChunkBytes = chunkSize)
 data_obs = None
+
+nbytes += writeFlatInChunks(kstat, f, "hkstat", maxChunkBytes = chunkSize)
+kstat = None
 
 if options.sparse:
   nbytes += writeSparse(norm_sparse_indices, norm_sparse_values, norm_sparse_dense_shape, f, "hnorm_sparse", maxChunkBytes = chunkSize)
