@@ -42,6 +42,8 @@ parser.add_option("-S","--doSystematics", type=int, default=1, help="enable syst
 parser.add_option("","--chunkSize", type=int, default=4*1024**2, help="chunk size for hd5fs storage")
 parser.add_option("", "--sparse", default=False, action='store_true',  help="Store normalization and systematics arrays as sparse tensors")
 parser.add_option("", "--scaleMaskedYields", type=float, default=1.,  help="Scaling factor for yields in masked channels")
+#parser.add_option("", "--postfix", default="",type="string", help="add _<postfix> to output hdf5 file")
+#parser.add_option("", "--outputDir", default="",type="string", help="Specify folder for output file (it is created if not existing)")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
