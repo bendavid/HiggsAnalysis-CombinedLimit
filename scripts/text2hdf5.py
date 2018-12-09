@@ -96,6 +96,16 @@ if options.doSystematics:
   
 nsyst = len(systs)  
   
+#list of groups of systematics (nuisances) and lists of indexes
+systgroups = []
+systgroupidxs = []
+for group in DC.groups:
+  systgroups.append(group)
+  systgroupidx = []
+  for syst in DC.groups[group]:
+    systgroupidx.append(systs.index(syst))
+  systgroupidxs.append(systgroupidx)
+    
 #list of channels, ordered such that masked channels are last
 chans = []
 for chan in DC.bins:
@@ -448,6 +458,12 @@ hsignals[...] = signals
 
 hsysts = f.create_dataset("hsysts", [len(systs)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsysts[...] = systs
+
+hsystgroups = f.create_dataset("hsystgroups", [len(systgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hsystgroups[...] = systgroups
+
+hsystgroupidxs = f.create_dataset("hsystgroupidxs", [len(systgroupidxs)], dtype=h5py.special_dtype(vlen=np.dtype('int32')), compression="gzip")
+hsystgroupidxs[...] = systgroupidxs
 
 hmaskedchans = f.create_dataset("hmaskedchans", [len(maskedchans)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hmaskedchans[...] = maskedchans

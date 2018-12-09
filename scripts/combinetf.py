@@ -60,6 +60,7 @@ parser.add_option("","--saveHists", default=False, action='store_true', help="sa
 parser.add_option("","--computeHistErrors", default=False, action='store_true', help="propagate uncertainties to prefit and postfit histograms")
 parser.add_option("","--binByBinStat", default=False, action='store_true', help="add bin-by-bin statistical uncertainties on templates (using Barlow and Beeston 'lite' method")
 parser.add_option("","--correlateXsecStat", default=False, action='store_true', help="Assume that cross sections in masked channels are correlated with expected values in templates (ie computed from the same MC events)")
+parser.add_option("","--doImpacts", default=False, action='store_true', help="Compute impacts on POIs per nuisance parameter and per-nuisance parameter group")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -81,6 +82,8 @@ f = h5py_cache.File(options.fileName, chunk_cache_mem_size=cacheSize, mode='r')
 procs = f['hprocs'][...]
 signals = f['hsignals'][...]
 systs = f['hsysts'][...]
+systgroups = f['hsystgroups'][...]
+systgroupidxs = f['hsystgroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
 
 #load arrays from file
@@ -103,6 +106,13 @@ nbinsmasked = nbinsfull - nbins
 nproc = len(procs)
 nsyst = len(systs)
 nsignals = len(signals)
+nsystgroups = len(systgroups)
+
+systgroupsfull = systgroups.tolist()
+systgroupsfull.append("stat")
+if options.binByBinStat:
+  systgroupsfull.append("binByBinStat")
+nsystgroupsfull = len(systgroupsfull)
 
 #build tensorflow graph for likelihood calculation
 
@@ -385,11 +395,71 @@ gradcol = tf.reshape(grad,[-1,1])
 edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessian,transpose_a=True),gradcol)
 
 invhessianouts = []
+jacouts = []
 for output in outputs:
   jacout = jacobian(tf.concat([output,theta],axis=0),x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
   invhessianout = tf.matmul(jacout,tf.matmul(invhessian,jacout,transpose_b=True))
   invhessianouts.append(invhessianout)
+  jacouts.append(jacout)
+  
+#impacts
+if options.doImpacts:
+  #signed per nuisance impacts
+  nuisanceimpactouts = []
+  for invhessianout in invhessianouts:
+    #impact for poi at index i in covariance matrix from nuisance with index j is C_ij/sqrt(C_jj) = <deltax deltatheta>/sqrt(<deltatheta^2>)
+    nuisanceimpactout = invhessianout[:npoi,npoi:]/tf.reshape(tf.sqrt(tf.matrix_diag_part(invhessianout)[npoi:]),[1,-1])
+    nuisanceimpactouts.append(nuisanceimpactout)
 
+  #unsigned per nuisance group impacts
+  #TODO possible performance optimizations:
+  #1) move loop over nuisance groups inside the graph
+  
+  hessianNoBBB = hessian
+  invhessianNoBBB = invhessian
+  if options.binByBinStat:
+    gradNoBBB = tf.gradients(l,x,gate_gradients=True, stop_gradients=beta)[0]
+    hessianNoBBB = jacobian(gradNoBBB,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False,stop_gradients=beta)
+    invhessianNoBBB = tf.matrix_inverse(hessianNoBBB)
+  hessianStat = hessianNoBBB[:npoi,:npoi]
+  invhessianStat = tf.matrix_inverse(hessianStat)
+
+  mcov = invhessian[npoi:,npoi:]
+  groupmcovs = []
+  for systgroupidx in systgroupidxs:
+    mcovreduced = tf.gather(mcov,systgroupidx,axis=0)
+    mcovreduced = tf.gather(mcovreduced,systgroupidx,axis=1)
+    groupmcov = tf.matrix_inverse(mcovreduced)
+    groupmcovs.append(groupmcov)
+
+  nuisancegroupimpactouts = []
+  #for vcovout in vcovouts:
+  for invhessianout, jacout in zip(invhessianouts,jacouts):
+    vcovout = invhessianout[:npoi,npoi:]
+    nuisancegroupimpactlist = []
+    for systgroupidx,groupmcov in zip(systgroupidxs,groupmcovs):
+      #impact is generalization of per-nuisance impacts above v^T C^-1 v
+      #where v is the matrix of poi x nuisance correlations within the group
+      #and C is is the subset of the covariance matrix corresponding to the nuisances in the group
+      vcovreduced = tf.gather(vcovout,systgroupidx,axis=1)
+      vimpact = tf.sqrt(tf.matrix_diag_part(tf.matmul(tf.matmul(vcovreduced,groupmcov),vcovreduced,transpose_b=True)))
+      nuisancegroupimpactlist.append(vimpact)
+    
+    #statistical uncertainties only
+    jacoutstat = jacout[:npoi,:npoi]
+    invhessoutStat = tf.matmul(jacoutstat,tf.matmul(invhessianStat,jacoutstat,transpose_b=True))
+    impactStat = tf.sqrt(tf.matrix_diag_part(invhessoutStat))
+    nuisancegroupimpactlist.append(impactStat)
+
+    #bin by bin template statistical uncertainties
+    if options.binByBinStat:
+      invhessianoutNoBBB = tf.matmul(jacout,tf.matmul(invhessianNoBBB,jacout,transpose_b=True))      
+      impactBBB = tf.sqrt(tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:npoi])
+      nuisancegroupimpactlist.append(impactBBB)
+    
+    nuisancegroupimpactout = tf.stack(nuisancegroupimpactlist,axis=1)
+    nuisancegroupimpactouts.append(nuisancegroupimpactout)
+    
 l0 = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
 x0 = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
 a = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
@@ -825,6 +895,9 @@ for itoy in range(ntoys):
   outminosupd = {}
   outminosdownd = {}
 
+  #list of hists to prevent garbage collection
+  hists = []
+
   for output, outvals,invhessoutval in zip(outputs, outvalss,invhessoutvals):
     outname = ":".join(output.name.split(":")[:-1])    
 
@@ -833,6 +906,9 @@ for itoy in range(ntoys):
       correlationHist = ROOT.TH2D('correlation_matrix_channel'+outname, 'correlation matrix for '+dName+' in channel'+outname, int(nparms), 0., 1., int(nparms), 0., 1.)
       covarianceHist  = ROOT.TH2D('covariance_matrix_channel' +outname, 'covariance matrix for ' +dName+' in channel'+outname, int(nparms), 0., 1., int(nparms), 0., 1.)
       correlationHist.GetZaxis().SetRangeUser(-1., 1.)
+
+      hists.append(correlationHist)
+      hists.append(covarianceHist)
 
       #set labels
       for ip1, p1 in enumerate(parms):
@@ -864,6 +940,31 @@ for itoy in range(ntoys):
 
   if options.saveHists and not options.toys > 1:
     postfithists = fillHists('postfit')
+    
+  if options.doImpacts and not options.toys > 0:
+    dName = 'asimov' if options.toys < 0 else 'data fit'
+    nuisanceimpactoutvals, nuisancegroupimpactoutvals = sess.run([nuisanceimpactouts,nuisancegroupimpactouts])
+    for output, nuisanceimpactoutval, nuisancegroupimpactoutval in zip(outputs,nuisanceimpactoutvals,nuisancegroupimpactoutvals):
+      outname = ":".join(output.name.split(":")[:-1])
+      nuisanceImpactHist = ROOT.TH2D('nuisance_impact_'+outname, 'per-nuisance impacts for '+dName+' in '+outname, int(npoi), 0., 1., int(nsyst), 0., 1.)
+      nuisanceGroupImpactHist = ROOT.TH2D('nuisance_group_impact_'+outname, 'per-nuisance-group impacts for '+dName+' in '+outname, int(npoi), 0., 1., int(nsystgroupsfull), 0., 1.)
+      
+      hists.append(nuisanceImpactHist)
+      hists.append(nuisanceGroupImpactHist)
+      
+      #set labels
+      for ipoi, poi in enumerate(pois):
+        nuisanceImpactHist.GetXaxis().SetBinLabel(ipoi+1, '%s' % poi)
+        nuisanceGroupImpactHist.GetXaxis().SetBinLabel(ipoi+1, '%s' % poi)
+        
+      for isyst, syst in enumerate(systs):
+        nuisanceImpactHist.GetYaxis().SetBinLabel(isyst+1, '%s' % syst)
+
+      for isystgroup, systgroup in enumerate(systgroupsfull):
+        nuisanceGroupImpactHist.GetYaxis().SetBinLabel(isystgroup+1, '%s' % systgroup)
+      
+      array2hist(nuisanceimpactoutval,nuisanceImpactHist)
+      array2hist(nuisancegroupimpactoutval,nuisanceGroupImpactHist)
 
   for var in options.minos:
     print("running minos-like algorithm for %s" % var)
