@@ -38,6 +38,7 @@ from array import array
 from HiggsAnalysis.CombinedLimit.tfscipyhess import ScipyTROptimizerInterface,jacobian,sum_loop
 
 parser = OptionParser(usage="usage: %prog [options] datacard.txt -o output \nrun with --help to get list of options")
+parser.add_option("-o","--output", default=None, type="string", help="output file name")
 parser.add_option("-t","--toys", default=0, type=int, help="run a given number of toys, 0 fits the data (default), and -1 fits the asimov toy")
 parser.add_option("","--toysFrequentist", default=True, action='store_true', help="run frequentist-type toys by randomizing constraint minima")
 parser.add_option("","--bypassFrequentistFit", default=True, action='store_true', help="bypass fit to data when running frequentist toys to get toys based on prefit expectations")
@@ -84,6 +85,15 @@ signals = f['hsignals'][...]
 systs = f['hsysts'][...]
 systgroups = f['hsystgroups'][...]
 systgroupidxs = f['hsystgroupidxs'][...]
+chargegroups = f['hchargegroups'][...]
+chargegroupidxs = f['hchargegroupidxs'][...]
+polgroups = f['hpolgroups'][...]
+polgroupidxs = f['hpolgroupidxs'][...]
+sumgroups = f['hsumgroups'][...]
+sumgroupsegmentids = f['hsumgroupsegmentids'][...]
+sumgroupidxs = f['hsumgroupidxs'][...]
+chargemetagroups = f['hchargemetagroups'][...]
+chargemetagroupidxs = f['hchargemetagroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
 
 #load arrays from file
@@ -107,6 +117,10 @@ nproc = len(procs)
 nsyst = len(systs)
 nsignals = len(signals)
 nsystgroups = len(systgroups)
+nchargegroups = len(chargegroups)
+npolgroups = len(polgroups)
+nsumgroups = len(sumgroups)
+nchargemetagroups = len(chargemetagroups)
 
 systgroupsfull = systgroups.tolist()
 systgroupsfull.append("stat")
@@ -324,6 +338,8 @@ pmaskedexpnorm = tf.squeeze(pmaskedexpnorm,0)
 pmaskedexpnorm = r*pmaskedexpnorm
 
   
+
+  
 if options.saveHists:
   nexpsigcentral = tf.reduce_sum(normfullcentral[:,:nsignals],axis=-1)
   nexpbkgcentral = tf.reduce_sum(normfullcentral[:,nsignals:],axis=-1)
@@ -373,11 +389,117 @@ pmaskedexp = tf.identity(pmaskedexp, "pmaskedexp")
 pmaskedexpnorm = tf.identity(pmaskedexpnorm, "pmaskedexpnorm")
  
 outputs = []
+outputnames = []
 
 outputs.append(poi)
+
+outputname = []
+for signal in signals:
+  outputname.append("%s_%s" % (signal,options.POIMode))
+outputnames.append(outputname)
+  
+  
 if nbinsmasked>0:
   outputs.append(pmaskedexp)
   outputs.append(pmaskedexpnorm)
+  
+  outputname = []
+  for signal in signals:
+    outputname.append("%s_pmaskedexp" % signal)
+  outputnames.append(outputname)
+
+  outputname = []
+  for signal in signals:
+    outputname.append("%s_pmaskedexpnorm" % signal)
+  outputnames.append(outputname)
+  
+#charge asymmetries if defined
+if nchargegroups > 0:  
+  #build matrix of cross sections
+  chargegroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(chargegroupidxs,[-1])),chargegroupidxs.shape)
+    
+  #total xsec = sigma_+ + sigma_-
+  #charge asym = (sigma_+ - sigma_-)/(sigma_+ + sigma_-)
+  mchargecoeffs = tf.constant([[1.,1.],[1.,-1.]],dtype=dtype)
+  mchargesums = tf.matmul(chargegroupxsecs,mchargecoeffs,transpose_b=True)
+  chargetotals = mchargesums[:,0]
+  chargeasyms = mchargesums[:,1]/chargetotals
+  
+  chargepois = tf.concat([chargetotals,chargeasyms],axis=0)
+  chargepois = tf.identity(chargepois,"chargepois")
+  outputs.append(chargepois)
+  
+  outputname = []
+  for group in chargegroups:
+    outputname.append("%s_chargetotalxsec" % group)
+  for group in chargegroups:
+    outputname.append("%s_chargeasym" % group)
+  
+  outputnames.append(outputname)
+  
+#angular coefficients if defined
+if npolgroups > 0:  
+  #build matrix of cross sections
+  polgroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(polgroupidxs,[-1])),polgroupidxs.shape)
+  
+  #unpolarized xsec = sigma_L + sigma_R + sigma_0
+  #A0 = 2*f0 = 2*sigma_0/unpolarizedxsec
+  #A4 = 2*(fL-fR) = 2*(sigma_L-sigma_R)/unpolarizedxsec
+  mpolcoeffs = tf.constant([[1.,1.,1.],[0.,0.,2.],[2.,-2.,0.]],dtype=dtype)
+  mpolsums = tf.matmul(polgroupxsecs,mpolcoeffs,transpose_b=True)
+  poltotals = mpolsums[:,0]
+  angularcoeffs = mpolsums[:,1:]/mpolsums[:,:1]
+  
+  polpois = tf.concat([poltotals,tf.reshape(tf.transpose(angularcoeffs),[-1])],axis=0)
+  polpois = tf.identity(polpois,"polpois")
+  outputs.append(polpois)
+  
+  outputname = []
+  for group in polgroups:
+    outputname.append("%s_unpolarizedxsec" % group)
+  for group in polgroups:
+    outputname.append("%s_a0" % group)
+  for group in polgroups:
+    outputname.append("%s_a4" % group)
+    
+  outputnames.append(outputname)
+  
+#sums of cross sections if defined
+if nsumgroups > 0:
+  #build sums of cross sections
+  xsecs = tf.gather(pmaskedexp,sumgroupidxs)
+  sumpois = tf.segment_sum(xsecs,sumgroupsegmentids)
+  sumpois.set_shape([nsumgroups])
+  sumpois = tf.identity(sumpois,"sumpois")
+  outputs.append(sumpois)
+  
+  outputname = []
+  for group in sumgroups:
+    outputname.append("%s_sumxsec" % group)
+  outputnames.append(outputname)
+  
+  if nchargemetagroups > 0:
+    #build matrix of cross sections
+    chargemetagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(chargemetagroupidxs,[-1])),chargemetagroupidxs.shape)
+        
+    #total xsec = sigma_+ + sigma_-
+    #chargemeta asym = (sigma_+ - sigma_-)/(sigma_+ + sigma_-)
+    mchargemetacoeffs = tf.constant([[1.,1.],[1.,-1.]],dtype=dtype)
+    mchargemetasums = tf.matmul(chargemetagroupxsecs,mchargemetacoeffs,transpose_b=True)
+    chargemetatotals = mchargemetasums[:,0]
+    chargemetaasyms = mchargemetasums[:,1]/chargemetatotals
+    
+    chargemetapois = tf.concat([chargemetatotals,chargemetaasyms],axis=0)
+    chargemetapois = tf.identity(chargemetapois,"chargemetapois")
+    outputs.append(chargemetapois)
+    
+    outputname = []
+    for group in chargemetagroups:
+      outputname.append("%s_chargemetatotalxsec" % group)
+    for group in chargemetagroups:
+      outputname.append("%s_chargemetaasym" % group)
+    
+    outputnames.append(outputname)
 
 nthreadshess = options.nThreads
 if nthreadshess<0:
@@ -406,9 +528,10 @@ for output in outputs:
 if options.doImpacts:
   #signed per nuisance impacts
   nuisanceimpactouts = []
-  for invhessianout in invhessianouts:
+  for output,invhessianout in zip(outputs,invhessianouts):
+    nout = output.shape[0]
     #impact for poi at index i in covariance matrix from nuisance with index j is C_ij/sqrt(C_jj) = <deltax deltatheta>/sqrt(<deltatheta^2>)
-    nuisanceimpactout = invhessianout[:npoi,npoi:]/tf.reshape(tf.sqrt(tf.matrix_diag_part(invhessianout)[npoi:]),[1,-1])
+    nuisanceimpactout = invhessianout[:nout,nout:]/tf.reshape(tf.sqrt(tf.matrix_diag_part(invhessianout)[nout:]),[1,-1])
     nuisanceimpactouts.append(nuisanceimpactout)
 
   #unsigned per nuisance group impacts
@@ -434,8 +557,9 @@ if options.doImpacts:
 
   nuisancegroupimpactouts = []
   #for vcovout in vcovouts:
-  for invhessianout, jacout in zip(invhessianouts,jacouts):
-    vcovout = invhessianout[:npoi,npoi:]
+  for output, invhessianout, jacout in zip(outputs,invhessianouts,jacouts):
+    nout = output.shape[0]
+    vcovout = invhessianout[:nout,nout:]
     nuisancegroupimpactlist = []
     for systgroupidx,groupmcov in zip(systgroupidxs,groupmcovs):
       #impact is generalization of per-nuisance impacts above v^T C^-1 v
@@ -446,7 +570,9 @@ if options.doImpacts:
       nuisancegroupimpactlist.append(vimpact)
     
     #statistical uncertainties only
-    jacoutstat = jacout[:npoi,:npoi]
+    print("jacout shape:")
+    print(jacout.shape)
+    jacoutstat = jacout[:nout,:npoi]
     invhessoutStat = tf.matmul(jacoutstat,tf.matmul(invhessianStat,jacoutstat,transpose_b=True))
     impactStat = tf.sqrt(tf.matrix_diag_part(invhessoutStat))
     nuisancegroupimpactlist.append(impactStat)
@@ -454,18 +580,12 @@ if options.doImpacts:
     #bin by bin template statistical uncertainties
     if options.binByBinStat:
       invhessianoutNoBBB = tf.matmul(jacout,tf.matmul(invhessianNoBBB,jacout,transpose_b=True))      
-      impactBBB = tf.sqrt(tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:npoi])
+      impactBBB = tf.sqrt(tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:nout])
       nuisancegroupimpactlist.append(impactBBB)
     
     nuisancegroupimpactout = tf.stack(nuisancegroupimpactlist,axis=1)
     nuisancegroupimpactouts.append(nuisancegroupimpactout)
     
-l0 = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
-x0 = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
-a = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
-errdir = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
-dlconstraint = l - l0
-
 def experr(expected, invhesschol):
   #compute uncertainty on expectation propagating through uncertainty on fit parameters using full covariance matrix
   
@@ -536,26 +656,42 @@ tfminimizer = SR1TrustExact(l,x,grad)
 opinit = tfminimizer.initialize(l,x,grad,hessian)
 opmin = tfminimizer.minimize(l,x,grad)
 
-scanvars = {}
-scannames = []
-scanvars["x"] = x
-scannames.append("x")
+outidxmap = {}
+outsubidxmap = {}
+for idx,outputname in enumerate(outputnames):
+  for subidx,name in enumerate(outputname):
+    outidxmap[name] = idx
+    outsubidxmap[name] = subidx
+
+scanvars = []
+scanvars.append(x)
 for output in outputs:
   outname = ":".join(output.name.split(":")[:-1])
   outputtheta = tf.concat([output,theta],axis=0)
-  scanvars[outname] = outputtheta
-  scannames.append(outname)
+  scanvars.append(outputtheta)
 
-scanminimizers = {}
-minosminimizers = {}
-for scanname in scannames:
-  scanvar = scanvars[scanname]
+l0 = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
+dlconstraint = l - l0
+a = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
+
+#x0 = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
+#errdir = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
+
+scanminimizers = []
+minosminimizers = []
+x0s = []
+errdirs = []
+for scanvar in scanvars:
+  x0 = tf.Variable(np.zeros(scanvar.shape,dtype=dtype),trainable=False)
+  errdir = tf.Variable(np.zeros(scanvar.shape,dtype=dtype),trainable=False)
   errproj = -tf.reduce_sum((scanvar-x0)*errdir,axis=0)
   dxconstraint = a + errproj
   scanminimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)},  equalities=[dxconstraint], options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
   minosminimizer = ScipyTROptimizerInterface(errproj, var_list = [x], var_to_bounds={x: (lb,ub)},  equalities=[dlconstraint], options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
-  scanminimizers[scanname] = scanminimizer
-  minosminimizers[scanname] = minosminimizer
+  scanminimizers.append(scanminimizer)
+  minosminimizers.append(minosminimizer)
+  x0s.append(x0)
+  errdirs.append(errdir)
 
 globalinit = tf.global_variables_initializer()
 nexpnomassign = tf.assign(nexpnom,nexpcentral)
@@ -574,7 +710,7 @@ if options.binByBinStat:
   bayesassignbeta = tf.assign(betagen, tf.random_gamma(shape=[],alpha=kstat+1.,beta=kstat,dtype=tf.as_dtype(dtype)))
 
 #initialize output tree
-f = ROOT.TFile( 'fitresults_%i.root' % seed, 'recreate' )
+f = ROOT.TFile(options.output if options.output else 'fitresults_%i.root' % seed, 'recreate' )
 tree = ROOT.TTree("fitresults", "fitresults")
 
 tseed = array('i', [seed])
@@ -621,12 +757,12 @@ touterrss = []
 toutminosupss = []
 toutminosdownss = []
 toutgenvalss = []
-outnames = []
-outidxs = {}
-for iout,output in enumerate(outputs):
-  outname = ":".join(output.name.split(":")[:-1])
-  outnames.append(outname)
-  outidxs[outname] = iout
+#outnames = []
+#outidxs = {}
+for output,outputname in zip(outputs,outputnames):
+  #outname = ":".join(output.name.split(":")[:-1])
+  #outnames.append(outname)
+  #outidxs[outname] = iout
   
   toutvals = []
   touterrs = []
@@ -640,7 +776,7 @@ for iout,output in enumerate(outputs):
   toutminosdownss.append(toutminosdowns)
   toutgenvalss.append(toutgenvals)
     
-  for poi in pois:
+  for name in outputname:
     toutval = array('f', [0.])
     touterr = array('f', [0.])
     toutminosup = array('f', [0.])
@@ -651,12 +787,12 @@ for iout,output in enumerate(outputs):
     toutminosups.append(toutminosup)
     toutminosdowns.append(toutminosdown)
     toutgenvals.append(toutgenval)
-    basename = "%s_%s" % (poi,outname)
-    tree.Branch(basename, toutval, '%s/F' % basename)
-    tree.Branch('%s_err' % basename, touterr, '%s_err/F' % basename)
-    tree.Branch('%s_minosup' % basename, toutminosup, '%s_minosup/F' % basename)
-    tree.Branch('%s_minosdown' % basename, toutminosdown, '%s_minosdown/F' % basename)
-    tree.Branch('%s_gen' % basename, toutgenval, '%s_gen/F' % basename)
+    #basename = "%s_%s" % (poi,outname)
+    tree.Branch(name, toutval, '%s/F' % name)
+    tree.Branch('%s_err' % name, touterr, '%s_err/F' % name)
+    tree.Branch('%s_minosup' % name, toutminosup, '%s_minosup/F' % name)
+    tree.Branch('%s_minosdown' % name, toutminosdown, '%s_minosdown/F' % name)
+    tree.Branch('%s_gen' % name, toutgenval, '%s_gen/F' % name)
 
 tthetavals = []
 ttheta0vals = []
@@ -898,20 +1034,24 @@ for itoy in range(ntoys):
   #list of hists to prevent garbage collection
   hists = []
 
-  for output, outvals,invhessoutval in zip(outputs, outvalss,invhessoutvals):
-    outname = ":".join(output.name.split(":")[:-1])    
+  for output, outputname, outvals,invhessoutval in zip(outputs, outputnames, outvalss,invhessoutvals):
+    outname = ":".join(output.name.split(":")[:-1])
+    outthetanames = outputname + systs.tolist()
+    nparmsout = len(outthetanames)
 
     if not options.toys > 0:
       dName = 'asimov' if options.toys < 0 else 'data fit'
-      correlationHist = ROOT.TH2D('correlation_matrix_channel'+outname, 'correlation matrix for '+dName+' in channel'+outname, int(nparms), 0., 1., int(nparms), 0., 1.)
-      covarianceHist  = ROOT.TH2D('covariance_matrix_channel' +outname, 'covariance matrix for ' +dName+' in channel'+outname, int(nparms), 0., 1., int(nparms), 0., 1.)
+      correlationHist = ROOT.TH2D('correlation_matrix_channel'+outname, 'correlation matrix for '+dName+' in channel'+outname, nparmsout, 0., 1., nparmsout, 0., 1.)
+      covarianceHist  = ROOT.TH2D('covariance_matrix_channel' +outname, 'covariance matrix for ' +dName+' in channel'+outname, nparmsout, 0., 1., nparmsout, 0., 1.)
       correlationHist.GetZaxis().SetRangeUser(-1., 1.)
 
       hists.append(correlationHist)
       hists.append(covarianceHist)
+      
+      
 
       #set labels
-      for ip1, p1 in enumerate(parms):
+      for ip1, p1 in enumerate(outthetanames):
         correlationHist.GetXaxis().SetBinLabel(ip1+1, '%s' % p1)
         correlationHist.GetYaxis().SetBinLabel(ip1+1, '%s' % p1)
         covarianceHist.GetXaxis().SetBinLabel(ip1+1, '%s' % p1)
@@ -944,16 +1084,17 @@ for itoy in range(ntoys):
   if options.doImpacts and not options.toys > 0:
     dName = 'asimov' if options.toys < 0 else 'data fit'
     nuisanceimpactoutvals, nuisancegroupimpactoutvals = sess.run([nuisanceimpactouts,nuisancegroupimpactouts])
-    for output, nuisanceimpactoutval, nuisancegroupimpactoutval in zip(outputs,nuisanceimpactoutvals,nuisancegroupimpactoutvals):
+    for output, outputname, nuisanceimpactoutval, nuisancegroupimpactoutval in zip(outputs,outputnames,nuisanceimpactoutvals,nuisancegroupimpactoutvals):
       outname = ":".join(output.name.split(":")[:-1])
-      nuisanceImpactHist = ROOT.TH2D('nuisance_impact_'+outname, 'per-nuisance impacts for '+dName+' in '+outname, int(npoi), 0., 1., int(nsyst), 0., 1.)
-      nuisanceGroupImpactHist = ROOT.TH2D('nuisance_group_impact_'+outname, 'per-nuisance-group impacts for '+dName+' in '+outname, int(npoi), 0., 1., int(nsystgroupsfull), 0., 1.)
+      nout = output.shape[0]
+      nuisanceImpactHist = ROOT.TH2D('nuisance_impact_'+outname, 'per-nuisance impacts for '+dName+' in '+outname, int(nout), 0., 1., int(nsyst), 0., 1.)
+      nuisanceGroupImpactHist = ROOT.TH2D('nuisance_group_impact_'+outname, 'per-nuisance-group impacts for '+dName+' in '+outname, int(nout), 0., 1., int(nsystgroupsfull), 0., 1.)
       
       hists.append(nuisanceImpactHist)
       hists.append(nuisanceGroupImpactHist)
       
       #set labels
-      for ipoi, poi in enumerate(pois):
+      for ipoi, poi in enumerate(outputname):
         nuisanceImpactHist.GetXaxis().SetBinLabel(ipoi+1, '%s' % poi)
         nuisanceGroupImpactHist.GetXaxis().SetBinLabel(ipoi+1, '%s' % poi)
         
@@ -969,25 +1110,21 @@ for itoy in range(ntoys):
   for var in options.minos:
     print("running minos-like algorithm for %s" % var)
     if var in systs:
-      erroutidx = systs.index(var)
+      erroutidx = systs.tolist().index(var)
       erridx = npoi + erroutidx
       minoserrsup = thetaminosups
       minoserrsdown = thetaminosdowns
       scanname = "x"
       outthetaval = xval
-      sigmas = thetasigmasv
+      sigmasv = thetasigmasv
+      outidx = 0
     else:
-      outname = var.split("_")[-1]
-      poi = "_".join(var.split("_")[:-1])
-      if not outname in outidxs:
-        raise Exception("Output not found")
-      if not poi in pois:
-        raise Exception("poi not found")
-      
-      outidx = outidxs[outname]
-      
-      scanname = outname
-      erroutidx = pois.index(poi)
+      if not var in outidxmap:
+        raise Exception("poi %s not found" % var)
+
+      outidx = outidxmap[var]
+      erroutidx = outsubidxmap[var]
+
       erridx = erroutidx
       minoserrsup = outminosupss[outidx]
       minoserrsdown = outminosdownss[outidx]
@@ -995,9 +1132,11 @@ for itoy in range(ntoys):
       sigmasv = outsigmass[outidx]
 
       
-    minosminimizer = minosminimizers[scanname]
-    scanminimizer = scanminimizers[scanname]
-    scanvar = scanvars[scanname]
+    minosminimizer = minosminimizers[outidx+1]
+    scanminimizer = scanminimizers[outidx+1]
+    scanvar = scanvars[outidx+1]
+    x0 = x0s[outidx+1]
+    errdir = errdirs[outidx+1]
     
     l0.load(nllval+0.5,sess)
     x0.load(outthetaval,sess)
@@ -1022,7 +1161,7 @@ for itoy in range(ntoys):
     xvalminosdown, nllvalminosdown = sess.run([scanvar,l])
     dxvaldown = -(xvalminosdown[erridx]-outthetaval[erridx])
     minoserrsdown[erroutidx] = dxvaldown
-    
+        
   tstatus[0] = status
   terrstatus[0] = errstatus
   tedmval[0] = edmval
@@ -1033,16 +1172,16 @@ for itoy in range(ntoys):
   tndof[0] = x.shape[0]
   tndofpartial[0] = npoi
   
-  for output,outvals,outsigmas,minosups,minosdowns,outgenvals,toutvals,touterrs,toutminosups,toutminosdowns,toutgenvals in zip(outputs,outvalss,outsigmass,outminosupss,outminosdownss,outvalsgens,toutvalss,touterrss,toutminosupss,toutminosdownss,toutgenvalss):
-    outname = ":".join(output.name.split(":")[:-1])    
-    for poi,outval,outma,minosup,minosdown,outgenval,toutval,touterr,toutminosup,toutminosdown,toutgenval in zip(pois,outvals,outsigmas,minosups,minosdowns,outgenvals,toutvals,touterrs,toutminosups,toutminosdowns,toutgenvals):
+  for output,outputname, outvals,outsigmas,minosups,minosdowns,outgenvals,toutvals,touterrs,toutminosups,toutminosdowns,toutgenvals in zip(outputs, outputnames, outvalss,outsigmass,outminosupss,outminosdownss,outvalsgens,toutvalss,touterrss,toutminosupss,toutminosdownss,toutgenvalss):
+    #outname = ":".join(output.name.split(":")[:-1])    
+    for name,outval,outma,minosup,minosdown,outgenval,toutval,touterr,toutminosup,toutminosdown,toutgenval in zip(outputname,outvals,outsigmas,minosups,minosdowns,outgenvals,toutvals,touterrs,toutminosups,toutminosdowns,toutgenvals):
       toutval[0] = outval
       touterr[0] = outma
       toutminosup[0] = minosup
       toutminosdown[0] = minosdown
       toutgenval[0] = outgenval
       if itoy==0:
-        print('%s_%s = %e +- %f (+%f -%f)' % (poi,outname,outval,outma,minosup,minosdown))
+        print('%s = %e +- %f (+%f -%f)' % (name,outval,outma,minosup,minosdown))
 
   for syst,thetaval,theta0val,sigma,minosup,minosdown,thetagenval, tthetaval,ttheta0val,tthetaerr,tthetaminosup,tthetaminosdown,tthetagenval in zip(systs,thetavals,theta0vals,thetasigmasv,thetaminosups,thetaminosdowns,thetavalsgen, tthetavals,ttheta0vals,tthetaerrs,tthetaminosups,tthetaminosdowns,tthetagenvals):
     tthetaval[0] = thetaval
@@ -1059,29 +1198,27 @@ for itoy in range(ntoys):
   for var in options.scan:
     print("running profile likelihood scan for %s" % var)
     if var in systs:
-      erroutidx = systs.index(var)
+      erroutidx = systs.tolist().index(var)
       erridx = npoi + erroutidx
       sigmasv = thetasigmasv
       scanname = "x"
       outthetaval = xval
+      outidx = 0
     else:
-      outname = var.split("_")[-1]
-      poi = "_".join(var.split("_")[:-1])
-      if not outname in outidxs:
-        raise Exception("Output not found")
-      if not poi in pois:
-        raise Exception("poi not found")
+      if not var in outidxmap:
+        raise Exception("poi %s not found" % var)
+
+      outidx = outidxmap[var]
+      erroutidx = outsubidxmap[var]
       
-      outidx = outidxs[outname]
-      
-      scanname = outname
-      erroutidx = pois.index(poi)
       erridx = erroutidx
       sigmasv = outsigmass[outidx]
       outthetaval = np.concatenate((outvalss[outidx],thetavals),axis=0)
       
       
-    scanminimizer = scanminimizers[scanname]
+    scanminimizer = scanminimizers[outidx+1]
+    x0 = x0s[outidx+1]
+    errdir = errdirs[outidx+1]
     
     x0.load(outthetaval,sess)
     
