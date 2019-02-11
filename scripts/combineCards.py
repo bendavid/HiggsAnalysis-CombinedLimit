@@ -4,6 +4,7 @@ from sys import argv
 import os.path
 from pprint import pprint
 from optparse import OptionParser
+from collections import OrderdDict
 parser = OptionParser(
     usage="%prog [options] [label=datacard.txt | datacard.txt]",
     epilog="The label=datacard.txt syntax allows to specify the label that channels from datacard.txt will have in the combined datacard. To combine cards with different energies one can use dc_7TeV=datacard7.txt dc_8TeV=datacard8.txt (avoid using labels starting with numbers)."
@@ -11,6 +12,7 @@ parser = OptionParser(
 parser.add_option("-s", "--stat",   dest="stat",          default=False, action="store_true", help="Drop all systematics")
 parser.add_option("-S", "--force-shape", dest="shape",    default=False, action="store_true", help="Treat all channels as shape analysis. Useful for mixed combinations")
 parser.add_option("-a", "--asimov", dest="asimov",  default=False, action="store_true", help="Replace observation with asimov dataset. Works only for counting experiments")
+parser.add_option(      "--noDirPrefix", dest="noDirPrefix",  default=False, action="store_true", help="Do not attempt to dirname of the orignal datacard to shapes file")
 parser.add_option("-P", "--prefix", type="string", dest="fprefix", default="",  help="Prefix this to all file names")
 parser.add_option("--xc", "--exclude-channel", type="string", dest="channelVetos", default=[], action="append", help="Exclude channels that match this regexp; can specify multiple ones")
 parser.add_option("--ic", "--include-channel", type="string", dest="channelIncludes", default=[], action="append", help="Only include channels that match this regexp; can specify multiple ones")
@@ -35,7 +37,8 @@ from HiggsAnalysis.CombinedLimit.DatacardParser import *
 obsline = []; obskeyline = [] ;
 keyline = []; expline = []; systlines = {}
 signals = []; backgrounds = []; shapeLines = []
-paramSysts = {}; flatParamNuisances = {}; discreteNuisances = {}; groups = {}; rateParams = {}; rateParamsOrder = set();
+paramSysts = {}; flatParamNuisances = {}; discreteNuisances = {}; groups = {}; rateParams = {}; rateParamsOrder = set()
+chargeGroups = collections.OrderedDict(); polGroups = collections.OrderedDict(); sumGroups = collections.OrderdDict(); chargeMetaGroups = collections.OrderedDict();
 extArgs = {}; binParFlags = {}
 nuisanceEdits = [];
 
@@ -147,14 +150,12 @@ for ich,fname in enumerate(args):
             p2sMapD = DC.shapeMap['*'] if DC.shapeMap.has_key('*') else {}
             for p, x in p2sMap.items():
                 xrep = [xi.replace("$CHANNEL",b) for xi in x]
-                if xrep[0] != 'FAKE' and dirname != '': 
-                    xrep[0] = dirname+"/"+xrep[0] if not os.path.isabs(xrep[0]) else xrep[0] ## if the path is absolute, do not prepend the directory
+                if xrep[0] != 'FAKE' and dirname != '' and not options.noDirPrefix: xrep[0] = dirname+"/"+xrep[0]
                 shapeLines.append((p,bout,xrep))
             for p, x in p2sMapD.items():
                 if p2sMap.has_key(p): continue
                 xrep = [xi.replace("$CHANNEL",b) for xi in x]
-                if xrep[0] != 'FAKE' and dirname != '': 
-                    xrep[0] = dirname+"/"+xrep[0] if not os.path.isabs(xrep[0]) else xrep[0] ## if the path is absolute, do not prepend the directory
+                if xrep[0] != 'FAKE' and dirname != '' and not options.noDirPrefix: xrep[0] = dirname+"/"+xrep[0]
                 shapeLines.append((p,bout,xrep))
     elif options.shape:
         for b in DC.bins:
@@ -176,6 +177,39 @@ for ich,fname in enumerate(args):
             groups[groupName].update(set(nuisanceNames))
         else:
             groups[groupName] = set(nuisanceNames)
+            
+    for groupName,procNames in DC.chargeGroups.iteritems():
+        if groupName in chargeGroups:
+            if chargeGroups[groupName] == procNames:
+                continue
+            else:
+                raise RuntimeError, "Conflicting definition of chargeGroup %s" % groupName
+        else:
+            chargeGroups[groupName] = procNames
+    for groupName,procNames in DC.polGroups.iteritems():
+        if groupName in polGroups:
+            if polGroups[groupName] == procNames:
+                continue
+            else:
+                raise RuntimeError, "Conflicting definition of polGroup %s" % groupName
+        else:
+            polGroups[groupName] = procNames
+    for groupName,procNames in DC.sumGroups.iteritems():
+        if groupName in sumGroups:
+            if sumGroups[groupName] == procNames:
+                continue
+            else:
+                raise RuntimeError, "Conflicting definition of sumGroup %s" % groupName
+        else:
+            sumGroups[groupName] = procNames
+    for groupName,procNames in DC.chargeMetaGroups.iteritems():
+        if groupName in chargeMetaGroups:
+            if chargeMetaGroups[groupName] == procNames:
+                continue
+            else:
+                raise RuntimeError, "Conflicting definition of chargeMetaGroup %s" % groupName
+        else:
+            chargeMetaGroups[groupName] = procNames
 
     # Finally report nuisance edits propagated to end of card
     for editline in DC.nuisanceEditLines:
