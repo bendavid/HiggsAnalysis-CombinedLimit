@@ -97,6 +97,56 @@ if options.doSystematics:
   
 nsyst = len(systs)  
   
+#list of groups of systematics (nuisances) and lists of indexes
+systgroups = []
+systgroupidxs = []
+for group in DC.groups:
+  systgroups.append(group)
+  systgroupidx = []
+  for syst in DC.groups[group]:
+    systgroupidx.append(systs.index(syst))
+  systgroupidxs.append(systgroupidx)
+    
+#list of groups of signal processes by charge
+chargegroups = []
+chargegroupidxs = []
+for group in DC.chargeGroups:
+  chargegroups.append(group)
+  chargegroupidx = []
+  for proc in DC.chargeGroups[group]:
+    chargegroupidx.append(procs.index(proc))
+  chargegroupidxs.append(chargegroupidx)
+
+#list of groups of signal processes by polarization
+polgroups = []
+polgroupidxs = []
+for group in DC.polGroups:
+  polgroups.append(group)
+  polgroupidx = []
+  for proc in DC.polGroups[group]:
+    polgroupidx.append(procs.index(proc))
+  polgroupidxs.append(polgroupidx)
+  
+#list of groups of signal processes to be summed
+sumgroups = []
+sumgroupsegmentids = []
+sumgroupidxs = []
+for igroup,group in enumerate(DC.sumGroups):
+  sumgroups.append(group)
+  for proc in DC.sumGroups[group]:
+    sumgroupsegmentids.append(igroup)
+    sumgroupidxs.append(procs.index(proc))
+    
+#list of groups of signal processes by chargemeta
+chargemetagroups = []
+chargemetagroupidxs = []
+for group in DC.chargeMetaGroups:
+  chargemetagroups.append(group)
+  chargemetagroupidx = []
+  for proc in DC.chargeMetaGroups[group]:
+    chargemetagroupidx.append(sumgroups.index(proc))
+  chargemetagroupidxs.append(chargemetagroupidx)
+    
 #list of channels, ordered such that masked channels are last
 chans = []
 for chan in DC.bins:
@@ -209,13 +259,20 @@ for chan in chans:
       if (norm_chan_hist.GetSumw2().GetSize()>0):
         print("proper uncertainties")
         sumw2_chan_hist = norm_chan_hist.Clone()
-        sumw2_chan_hist.Set(sumw2_chan_hist.GetSumw2().GetSize(), sumw2_chan_hist.GetSumw2().GetArray())
+        if sumw2_chan_hist.InheritsFrom('TH1F'):
+            #work around for the fact GetSumw2 returns a TArrayD but TH1F expects a Float_t *
+            from array import array
+            sumw2f=[sumw2_chan_hist.GetSumw2()[i] for i in range(sumw2_chan_hist.GetSumw2().GetSize())]
+            sumw2f = array('f',sumw2f)
+            sumw2_chan_hist.Set(sumw2_chan_hist.GetSumw2().GetSize(), sumw2f)
+        else:
+            sumw2_chan_hist.Set(sumw2_chan_hist.GetSumw2().GetSize(), sumw2_chan_hist.GetSumw2().GetArray())
         sumw2_chan = hist2array(sumw2_chan_hist, include_overflow=False).astype(dtype)
         sumw2_chan_hist.Delete()
       else:
         print("fallback uncertainties")
-        nentries_chan = (norm_chan_hist.GetEntries()/norm_chan_hist.GetSumOfWeights())*normchan
-        sumw2_chan = nentries_chan*np.square(normchan/nentries_chan)
+        nentries_chan = (norm_chan_hist.GetEntries()/norm_chan_hist.GetSumOfWeights())*norm_chan
+        sumw2_chan = nentries_chan*np.square(norm_chan/nentries_chan)
         nentries_chan = None
     norm_chan_hist.Delete()
     
@@ -438,7 +495,7 @@ if chunkSize > options.chunkSize:
 outfilename = options.out.replace('.root','.hdf5')
 if options.sparse:
   outfilename = outfilename.replace('.hdf5','_sparse.hdf5')
-if options.postfix:
+if options.postfix: 
     outfilename = outfilename.replace('.hdf5','_{pf}.hdf5'.format(pf=options.postfix))
 f = h5py_cache.File(outfilename, chunk_cache_mem_size=chunkSize, mode='w')
 
@@ -451,6 +508,39 @@ hsignals[...] = signals
 
 hsysts = f.create_dataset("hsysts", [len(systs)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsysts[...] = systs
+
+hsystgroups = f.create_dataset("hsystgroups", [len(systgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hsystgroups[...] = systgroups
+
+hsystgroupidxs = f.create_dataset("hsystgroupidxs", [len(systgroupidxs)], dtype=h5py.special_dtype(vlen=np.dtype('int32')), compression="gzip")
+hsystgroupidxs[...] = systgroupidxs
+
+hchargegroups = f.create_dataset("hchargegroups", [len(chargegroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hchargegroups[...] = chargegroups
+
+hchargegroupidxs = f.create_dataset("hchargegroupidxs", [len(chargegroups),2], dtype='int32', compression="gzip")
+hchargegroupidxs[...] = chargegroupidxs
+
+hpolgroups = f.create_dataset("hpolgroups", [len(polgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hpolgroups[...] = polgroups
+
+hpolgroupidxs = f.create_dataset("hpolgroupidxs", [len(polgroups),3], dtype='int32', compression="gzip")
+hpolgroupidxs[...] = polgroupidxs
+
+hsumgroups = f.create_dataset("hsumgroups", [len(sumgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hsumgroups[...] = sumgroups
+
+hsumgroupsegmentids = f.create_dataset("hsumgroupsegmentids", [len(sumgroupsegmentids)], dtype='int32', compression="gzip")
+hsumgroupsegmentids[...] = sumgroupsegmentids
+
+hsumgroupidxs = f.create_dataset("hsumgroupidxs", [len(sumgroupidxs)], dtype='int32', compression="gzip")
+hsumgroupidxs[...] = sumgroupidxs
+
+hchargemetagroups = f.create_dataset("hchargemetagroups", [len(chargemetagroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hchargemetagroups[...] = chargemetagroups
+
+hchargemetagroupidxs = f.create_dataset("hchargemetagroupidxs", [len(chargemetagroups),2], dtype='int32', compression="gzip")
+hchargemetagroupidxs[...] = chargemetagroupidxs
 
 hmaskedchans = f.create_dataset("hmaskedchans", [len(maskedchans)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hmaskedchans[...] = maskedchans

@@ -29,7 +29,8 @@ def jacobian(ys,
              gate_gradients=False,
              aggregation_method=None,
              parallel_iterations=10,
-             back_prop = True):
+             back_prop = True,
+             stop_gradients = None):
   """Constructs the jacobian of sum of `ys` with respect to `x` in `xs`.
   `jacobians()` adds ops to the graph to output the Hessian matrix of `ys`
   with respect to `xs`.  It returns a list of `Tensor` of length `len(xs)`
@@ -75,7 +76,7 @@ def jacobian(ys,
   _, hessian = control_flow_ops.while_loop(
       lambda j, _: j < n,
       lambda j, result: (j + 1,
-                          result.write(j, tf.gradients(gradient[j], x, colocate_gradients_with_ops=colocate_gradients_with_ops, gate_gradients=gate_gradients, aggregation_method=aggregation_method)[0])),
+                          result.write(j, tf.gradients(gradient[j], x, colocate_gradients_with_ops=colocate_gradients_with_ops, gate_gradients=gate_gradients, aggregation_method=aggregation_method, stop_gradients=stop_gradients)[0])),
       loop_vars,
       parallel_iterations = parallel_iterations,
       back_prop = back_prop,
