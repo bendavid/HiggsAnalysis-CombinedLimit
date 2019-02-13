@@ -256,6 +256,88 @@ def parseCard(file, options):
                         ret.groups[groupName].update( set(groupNuisances) )
                     else:
                         raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.groups[groupName],groupNuisances)
+                      
+                continue
+                      
+            elif pdf=="chargeGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupProcs = numbers
+
+                if not groupProcs:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupProcs.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for chargeGroup '%s': first thing after 'chargeGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if len(groupProcs) != 2:
+                    raise RuntimeError, "Error for chargeGroup '%s': group has %d elements, but expected to have 2." % len(groupProcs)
+
+                if groupName not in ret.chargeGroups:
+                    ret.chargeGroups[groupName] = list(groupProcs)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.chargeGroups[groupName],groupProcs)
+
+                continue
+            elif pdf=="polGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupProcs = numbers
+
+                if not groupProcs:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupProcs.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for polGroup '%s': first thing after 'polGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if len(groupProcs) != 3:
+                    raise RuntimeError, "Error for polGroup '%s': group has %d elements, but expected to have 3." % len(groupProcs)
+
+                if groupName not in ret.polGroups:
+                    ret.polGroups[groupName] = list(groupProcs)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.polGroups[groupName],groupProcs)
+
+                continue
+            elif pdf=="sumGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupProcs = numbers
+
+                if not groupProcs:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupProcs.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for sumGroup '%s': first thing after 'sumGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if groupName not in ret.sumGroups:
+                    ret.sumGroups[groupName] = list(groupProcs)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.sumGroups[groupName],groupProcs)
+
+                continue              
+            elif pdf=="chargeMetaGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupProcs = numbers
+
+                if not groupProcs:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupProcs.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for chargeMetaGroup '%s': first thing after 'chargeMetaGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if len(groupProcs) != 2:
+                    raise RuntimeError, "Error for chargeMetaGroup '%s': group has %d elements, but expected to have 2." % len(groupProcs)
+
+                if groupName not in ret.chargeMetaGroups:
+                    ret.chargeMetaGroups[groupName] = list(groupProcs)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.chargeMetaGroups[groupName],groupProcs)
 
                 continue
 	    elif pdf=="autoMCStats":
