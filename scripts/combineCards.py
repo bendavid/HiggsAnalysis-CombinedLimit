@@ -4,7 +4,7 @@ from sys import argv
 import os.path
 from pprint import pprint
 from optparse import OptionParser
-from collections import OrderdDict
+from collections import OrderedDict
 parser = OptionParser(
     usage="%prog [options] [label=datacard.txt | datacard.txt]",
     epilog="The label=datacard.txt syntax allows to specify the label that channels from datacard.txt will have in the combined datacard. To combine cards with different energies one can use dc_7TeV=datacard7.txt dc_8TeV=datacard8.txt (avoid using labels starting with numbers)."
@@ -38,7 +38,7 @@ obsline = []; obskeyline = [] ;
 keyline = []; expline = []; systlines = {}
 signals = []; backgrounds = []; shapeLines = []
 paramSysts = {}; flatParamNuisances = {}; discreteNuisances = {}; groups = {}; rateParams = {}; rateParamsOrder = set()
-chargeGroups = collections.OrderedDict(); polGroups = collections.OrderedDict(); sumGroups = collections.OrderdDict(); chargeMetaGroups = collections.OrderedDict();
+chargeGroups = OrderedDict(); polGroups = OrderedDict(); sumGroups = OrderedDict(); chargeMetaGroups = OrderedDict();
 extArgs = {}; binParFlags = {}
 nuisanceEdits = [];
 
@@ -306,6 +306,20 @@ for ext in extArgs.iterkeys():
 for groupName,nuisanceNames in groups.iteritems():
     nuisances = ' '.join(nuisanceNames)
     print '%(groupName)s group = %(nuisances)s' % locals()
+
+for groupName,procNames in chargeGroups.iteritems():
+    procs = ' '.join(procNames)
+    print '%(groupName)s chargeGroup = %(procs)s' % locals()
+for groupName,procNames in polGroups.iteritems():
+    procs = ' '.join(procNames)
+    print '%(groupName)s polGroup = %(procs)s' % locals()
+for groupName,procNames in sumGroups.iteritems():
+    procs = ' '.join(procNames)
+    print '%(groupName)s sumGroup = %(procs)s' % locals()
+for groupName,procNames in chargeMetaGroups.iteritems():
+    procs = ' '.join(procNames)
+    print '%(groupName)s chargeMetaGroup = %(procs)s' % locals()
+
 for bpf in binParFlags.iterkeys():
     if len(binParFlags[bpf]) == 1:
       print "%s autoMCStats %g" % (bpf,binParFlags[bpf][0])
