@@ -478,6 +478,18 @@ if nsumgroups > 0:
     outputname.append("%s_sumxsec" % group)
   outputnames.append(outputname)
   
+  #build sums of normalized cross sections
+  xsecsnorm = tf.gather(pmaskedexpnorm,sumgroupidxs)
+  sumpoisnorm = tf.segment_sum(xsecsnorm,sumgroupsegmentids)
+  sumpoisnorm.set_shape([nsumgroups])
+  sumpoisnorm = tf.identity(sumpoisnorm,"sumpoisnorm")
+  outputs.append(sumpoisnorm)
+  
+  outputname = []
+  for group in sumgroups:
+    outputname.append("%s_sumxsecnorm" % group)
+  outputnames.append(outputname)
+  
   if nchargemetagroups > 0:
     #build matrix of cross sections
     chargemetagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(chargemetagroupidxs,[-1])),chargemetagroupidxs.shape)
