@@ -394,124 +394,125 @@ outputnames = []
 outputs.append(poi)
 
 outputname = []
-for signal in signals:
-  outputname.append("%s_%s" % (signal,options.POIMode))
+if options.POIMode == "mu":
+  for signal in signals:
+    outputname.append("%s_%s" % (signal,options.POIMode))
 outputnames.append(outputname)
   
-  
-if nbinsmasked>0:
-  outputs.append(pmaskedexp)
-  outputs.append(pmaskedexpnorm)
-  
-  outputname = []
-  for signal in signals:
-    outputname.append("%s_pmaskedexp" % signal)
-  outputnames.append(outputname)
-
-  outputname = []
-  for signal in signals:
-    outputname.append("%s_pmaskedexpnorm" % signal)
-  outputnames.append(outputname)
-  
-#charge asymmetries if defined
-if nchargegroups > 0:  
-  #build matrix of cross sections
-  chargegroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(chargegroupidxs,[-1])),chargegroupidxs.shape)
-    
-  #total xsec = sigma_+ + sigma_-
-  #charge asym = (sigma_+ - sigma_-)/(sigma_+ + sigma_-)
-  mchargecoeffs = tf.constant([[1.,1.],[1.,-1.]],dtype=dtype)
-  mchargesums = tf.matmul(chargegroupxsecs,mchargecoeffs,transpose_b=True)
-  chargetotals = mchargesums[:,0]
-  chargeasyms = mchargesums[:,1]/chargetotals
-  
-  chargepois = tf.concat([chargetotals,chargeasyms],axis=0)
-  chargepois = tf.identity(chargepois,"chargepois")
-  outputs.append(chargepois)
-  
-  outputname = []
-  for group in chargegroups:
-    outputname.append("%s_chargetotalxsec" % group)
-  for group in chargegroups:
-    outputname.append("%s_chargeasym" % group)
-  
-  outputnames.append(outputname)
-  
-#angular coefficients if defined
-if npolgroups > 0:  
-  #build matrix of cross sections
-  polgroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(polgroupidxs,[-1])),polgroupidxs.shape)
-  
-  #unpolarized xsec = sigma_L + sigma_R + sigma_0
-  #A0 = 2*f0 = 2*sigma_0/unpolarizedxsec
-  #A4 = 2*(fL-fR) = 2*(sigma_L-sigma_R)/unpolarizedxsec
-  mpolcoeffs = tf.constant([[1.,1.,1.],[0.,0.,2.],[2.,-2.,0.]],dtype=dtype)
-  mpolsums = tf.matmul(polgroupxsecs,mpolcoeffs,transpose_b=True)
-  poltotals = mpolsums[:,0]
-  angularcoeffs = mpolsums[:,1:]/mpolsums[:,:1]
-  
-  polpois = tf.concat([poltotals,tf.reshape(tf.transpose(angularcoeffs),[-1])],axis=0)
-  polpois = tf.identity(polpois,"polpois")
-  outputs.append(polpois)
-  
-  outputname = []
-  for group in polgroups:
-    outputname.append("%s_unpolarizedxsec" % group)
-  for group in polgroups:
-    outputname.append("%s_a0" % group)
-  for group in polgroups:
-    outputname.append("%s_a4" % group)
-    
-  outputnames.append(outputname)
-  
-#sums of cross sections if defined
-if nsumgroups > 0:
-  #build sums of cross sections
-  xsecs = tf.gather(pmaskedexp,sumgroupidxs)
-  sumpois = tf.segment_sum(xsecs,sumgroupsegmentids)
-  sumpois.set_shape([nsumgroups])
-  sumpois = tf.identity(sumpois,"sumpois")
-  outputs.append(sumpois)
-  
-  outputname = []
-  for group in sumgroups:
-    outputname.append("%s_sumxsec" % group)
-  outputnames.append(outputname)
-  
-  #build sums of normalized cross sections
-  xsecsnorm = tf.gather(pmaskedexpnorm,sumgroupidxs)
-  sumpoisnorm = tf.segment_sum(xsecsnorm,sumgroupsegmentids)
-  sumpoisnorm.set_shape([nsumgroups])
-  sumpoisnorm = tf.identity(sumpoisnorm,"sumpoisnorm")
-  outputs.append(sumpoisnorm)
-  
-  outputname = []
-  for group in sumgroups:
-    outputname.append("%s_sumxsecnorm" % group)
-  outputnames.append(outputname)
-  
-  if nchargemetagroups > 0:
-    #build matrix of cross sections
-    chargemetagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(chargemetagroupidxs,[-1])),chargemetagroupidxs.shape)
-        
-    #total xsec = sigma_+ + sigma_-
-    #chargemeta asym = (sigma_+ - sigma_-)/(sigma_+ + sigma_-)
-    mchargemetacoeffs = tf.constant([[1.,1.],[1.,-1.]],dtype=dtype)
-    mchargemetasums = tf.matmul(chargemetagroupxsecs,mchargemetacoeffs,transpose_b=True)
-    chargemetatotals = mchargemetasums[:,0]
-    chargemetaasyms = mchargemetasums[:,1]/chargemetatotals
-    
-    chargemetapois = tf.concat([chargemetatotals,chargemetaasyms],axis=0)
-    chargemetapois = tf.identity(chargemetapois,"chargemetapois")
-    outputs.append(chargemetapois)
+if options.POIMode == "mu":  
+  if nbinsmasked>0:
+    outputs.append(pmaskedexp)
+    outputs.append(pmaskedexpnorm)
     
     outputname = []
-    for group in chargemetagroups:
-      outputname.append("%s_chargemetatotalxsec" % group)
-    for group in chargemetagroups:
-      outputname.append("%s_chargemetaasym" % group)
+    for signal in signals:
+      outputname.append("%s_pmaskedexp" % signal)
+    outputnames.append(outputname)
+
+    outputname = []
+    for signal in signals:
+      outputname.append("%s_pmaskedexpnorm" % signal)
+    outputnames.append(outputname)
+    
+  #charge asymmetries if defined
+  if nchargegroups > 0:  
+    #build matrix of cross sections
+    chargegroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(chargegroupidxs,[-1])),chargegroupidxs.shape)
+      
+    #total xsec = sigma_+ + sigma_-
+    #charge asym = (sigma_+ - sigma_-)/(sigma_+ + sigma_-)
+    mchargecoeffs = tf.constant([[1.,1.],[1.,-1.]],dtype=dtype)
+    mchargesums = tf.matmul(chargegroupxsecs,mchargecoeffs,transpose_b=True)
+    chargetotals = mchargesums[:,0]
+    chargeasyms = mchargesums[:,1]/chargetotals
+    
+    chargepois = tf.concat([chargetotals,chargeasyms],axis=0)
+    chargepois = tf.identity(chargepois,"chargepois")
+    outputs.append(chargepois)
+    
+    outputname = []
+    for group in chargegroups:
+      outputname.append("%s_chargetotalxsec" % group)
+    for group in chargegroups:
+      outputname.append("%s_chargeasym" % group)
     
     outputnames.append(outputname)
+    
+  #angular coefficients if defined
+  if npolgroups > 0:  
+    #build matrix of cross sections
+    polgroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(polgroupidxs,[-1])),polgroupidxs.shape)
+    
+    #unpolarized xsec = sigma_L + sigma_R + sigma_0
+    #A0 = 2*f0 = 2*sigma_0/unpolarizedxsec
+    #A4 = 2*(fL-fR) = 2*(sigma_L-sigma_R)/unpolarizedxsec
+    mpolcoeffs = tf.constant([[1.,1.,1.],[0.,0.,2.],[2.,-2.,0.]],dtype=dtype)
+    mpolsums = tf.matmul(polgroupxsecs,mpolcoeffs,transpose_b=True)
+    poltotals = mpolsums[:,0]
+    angularcoeffs = mpolsums[:,1:]/mpolsums[:,:1]
+    
+    polpois = tf.concat([poltotals,tf.reshape(tf.transpose(angularcoeffs),[-1])],axis=0)
+    polpois = tf.identity(polpois,"polpois")
+    outputs.append(polpois)
+    
+    outputname = []
+    for group in polgroups:
+      outputname.append("%s_unpolarizedxsec" % group)
+    for group in polgroups:
+      outputname.append("%s_a0" % group)
+    for group in polgroups:
+      outputname.append("%s_a4" % group)
+      
+    outputnames.append(outputname)
+    
+  #sums of cross sections if defined
+  if nsumgroups > 0:
+    #build sums of cross sections
+    xsecs = tf.gather(pmaskedexp,sumgroupidxs)
+    sumpois = tf.segment_sum(xsecs,sumgroupsegmentids)
+    sumpois.set_shape([nsumgroups])
+    sumpois = tf.identity(sumpois,"sumpois")
+    outputs.append(sumpois)
+    
+    outputname = []
+    for group in sumgroups:
+      outputname.append("%s_sumxsec" % group)
+    outputnames.append(outputname)
+    
+    #build sums of normalized cross sections
+    xsecsnorm = tf.gather(pmaskedexpnorm,sumgroupidxs)
+    sumpoisnorm = tf.segment_sum(xsecsnorm,sumgroupsegmentids)
+    sumpoisnorm.set_shape([nsumgroups])
+    sumpoisnorm = tf.identity(sumpoisnorm,"sumpoisnorm")
+    outputs.append(sumpoisnorm)
+    
+    outputname = []
+    for group in sumgroups:
+      outputname.append("%s_sumxsecnorm" % group)
+    outputnames.append(outputname)
+    
+    if nchargemetagroups > 0:
+      #build matrix of cross sections
+      chargemetagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(chargemetagroupidxs,[-1])),chargemetagroupidxs.shape)
+          
+      #total xsec = sigma_+ + sigma_-
+      #chargemeta asym = (sigma_+ - sigma_-)/(sigma_+ + sigma_-)
+      mchargemetacoeffs = tf.constant([[1.,1.],[1.,-1.]],dtype=dtype)
+      mchargemetasums = tf.matmul(chargemetagroupxsecs,mchargemetacoeffs,transpose_b=True)
+      chargemetatotals = mchargemetasums[:,0]
+      chargemetaasyms = mchargemetasums[:,1]/chargemetatotals
+      
+      chargemetapois = tf.concat([chargemetatotals,chargemetaasyms],axis=0)
+      chargemetapois = tf.identity(chargemetapois,"chargemetapois")
+      outputs.append(chargemetapois)
+      
+      outputname = []
+      for group in chargemetagroups:
+        outputname.append("%s_chargemetatotalxsec" % group)
+      for group in chargemetagroups:
+        outputname.append("%s_chargemetaasym" % group)
+      
+      outputnames.append(outputname)
 
 nthreadshess = options.nThreads
 if nthreadshess<0:
@@ -1049,6 +1050,7 @@ for itoy in range(ntoys):
   for output, outputname, outvals,invhessoutval in zip(outputs, outputnames, outvalss,invhessoutvals):
     outname = ":".join(output.name.split(":")[:-1])
     outthetanames = outputname + systs.tolist()
+    nout = len(outputname)
     nparmsout = len(outthetanames)
 
     if not options.toys > 0:
@@ -1071,7 +1073,7 @@ for itoy in range(ntoys):
 
     if errstatus==0:
       parameterErrors = np.sqrt(np.diag(invhessoutval))
-      sigmasv = parameterErrors[:npoi]
+      sigmasv = parameterErrors[:nout]
       if not options.toys > 0:
         variances2D     = parameterErrors[np.newaxis].T * parameterErrors
         correlationMatrix = np.divide(invhessoutval, variances2D)
