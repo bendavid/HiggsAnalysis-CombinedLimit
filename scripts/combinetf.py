@@ -3,6 +3,7 @@ import re
 from sys import argv, stdout, stderr, exit, modules
 from optparse import OptionParser
 import multiprocessing
+import os
 
 import tensorflow as tf
 
@@ -61,6 +62,8 @@ parser.add_option("","--saveHists", default=False, action='store_true', help="sa
 parser.add_option("","--computeHistErrors", default=False, action='store_true', help="propagate uncertainties to prefit and postfit histograms")
 parser.add_option("","--binByBinStat", default=False, action='store_true', help="add bin-by-bin statistical uncertainties on templates (using Barlow and Beeston 'lite' method")
 parser.add_option("","--correlateXsecStat", default=False, action='store_true', help="Assume that cross sections in masked channels are correlated with expected values in templates (ie computed from the same MC events)")
+parser.add_option("","--postfix", default="",type="string", help="add _<postfix> to output root file")
+parser.add_option("", "--outputDir", default="",type="string", help="Specify folder for output file (it is created if not existing). If SAME is given, use same folder as input file")
 parser.add_option("","--doImpacts", default=False, action='store_true', help="Compute impacts on POIs per nuisance parameter and per-nuisance parameter group")
 (options, args) = parser.parse_args()
 
@@ -723,7 +726,20 @@ if options.binByBinStat:
   bayesassignbeta = tf.assign(betagen, tf.random_gamma(shape=[],alpha=kstat+1.,beta=kstat,dtype=tf.as_dtype(dtype)))
 
 #initialize output tree
-f = ROOT.TFile(options.output if options.output else 'fitresults_%i.root' % seed, 'recreate' )
+# manage output folder                                                                                                                                                      
+outdir = ""
+if options.outputDir:
+    outdir = options.outputDir
+    if outdir == "SAME": outdir = os.path.dirname(options.fileName)
+    if not outdir.endswith('/'): outdir += "/"
+    if outdir != "./":
+        if not os.path.exists(outdir):
+            print "Creating folder", outdir
+            os.system("mkdir -p " + outdir)
+
+fname = outdir + 'fitresults_%i.root' % seed
+if options.postfix: fname = fname.replace(".root","_{pf}.root".format(pf=options.postfix))
+f = ROOT.TFile( fname , 'recreate' )
 tree = ROOT.TTree("fitresults", "fitresults")
 
 tseed = array('i', [seed])
