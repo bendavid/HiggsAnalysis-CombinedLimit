@@ -65,6 +65,7 @@ parser.add_option("","--correlateXsecStat", default=False, action='store_true', 
 parser.add_option("","--postfix", default="",type="string", help="add _<postfix> to output root file")
 parser.add_option("", "--outputDir", default="",type="string", help="Specify folder for output file (it is created if not existing). If SAME is given, use same folder as input file")
 parser.add_option("","--doImpacts", default=False, action='store_true', help="Compute impacts on POIs per nuisance parameter and per-nuisance parameter group")
+parser.add_option("","--useSciPyMinimizer", default=False, action='store_true', help="Use SciPy constrained trust region minimizer for instead of native tensorflow one")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -668,9 +669,13 @@ ub = np.concatenate((np.inf*np.ones([npoi],dtype=dtype),np.inf*np.ones([nsyst],d
 xtol = np.finfo(dtype).eps
 edmtol = math.sqrt(xtol)
 btol = 1e-8
-tfminimizer = SR1TrustExact(l,x,grad)
-opinit = tfminimizer.initialize(l,x,grad,hessian)
-opmin = tfminimizer.minimize(l,x,grad)
+
+if options.useSciPyMinimizer:
+  scipyminimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)}, options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
+else:
+  tfminimizer = SR1TrustExact(l,x,grad)
+  opinit = tfminimizer.initialize(l,x,grad,hessian)
+  opmin = tfminimizer.minimize(l,x,grad)
 
 outidxmap = {}
 outsubidxmap = {}
@@ -689,9 +694,6 @@ for output in outputs:
 l0 = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
 dlconstraint = l - l0
 a = tf.Variable(np.zeros([],dtype=dtype),trainable=False)
-
-#x0 = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
-#errdir = tf.Variable(np.zeros(x.shape,dtype=dtype),trainable=False)
 
 scanminimizers = []
 minosminimizers = []
@@ -878,17 +880,20 @@ outvalsgens,thetavalsgen = sess.run([outputs,theta])
 #all caches should be filled by now
 
 def minimize():
-  sess.run(opinit)
-  ifit = 0
-  while True:
-    isconverged,_ = sess.run(opmin)
-    if options.fitverbose > 2:
-      lval, gmagval, e0val, trval = sess.run([tfminimizer.loss_old, tfminimizer.grad_old_mag, tfminimizer.e0, tfminimizer.trustradius])
-      print('Iteration %d, loss = %.6f, |g| = %e, lowest eigenvalue = %e, trustradius = %e' % (ifit,lval,gmagval,e0val,trval))
-    if isconverged:
-      break
-    
-    ifit += 1
+  if options.useSciPyMinimizer:
+    scipyminimizer.minimize(sess)
+  else:
+    sess.run(opinit)
+    ifit = 0
+    while True:
+      isconverged,_ = sess.run(opmin)
+      if options.fitverbose > 2:
+        lval, gmagval, e0val, trval = sess.run([tfminimizer.loss_old, tfminimizer.grad_old_mag, tfminimizer.e0, tfminimizer.trustradius])
+        print('Iteration %d, loss = %.6f, |g| = %e, lowest eigenvalue = %e, trustradius = %e' % (ifit,lval,gmagval,e0val,trval))
+      if isconverged:
+        break
+      
+      ifit += 1
 
 def fillHists(tag, witherrors=options.computeHistErrors):
   print("filling hists")
