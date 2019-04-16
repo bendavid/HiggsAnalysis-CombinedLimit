@@ -575,6 +575,10 @@ if options.doImpacts:
   nuisancegroupimpactouts = []
   #for vcovout in vcovouts:
   for output, invhessianout, jacout in zip(outputs,invhessianouts,jacouts):
+    jacoutNoBBB = jacout
+    if options.binByBinStat:
+      jacoutNoBBB = jacobian(tf.concat([output,theta],axis=0),x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False,stop_gradients=beta)
+    
     nout = output.shape[0]
     vcovout = invhessianout[:nout,nout:]
     nuisancegroupimpactlist = []
@@ -587,16 +591,14 @@ if options.doImpacts:
       nuisancegroupimpactlist.append(vimpact)
     
     #statistical uncertainties only
-    print("jacout shape:")
-    print(jacout.shape)
-    jacoutstat = jacout[:nout,:npoi]
+    jacoutstat = jacoutNoBBB[:nout,:npoi]
     invhessoutStat = tf.matmul(jacoutstat,tf.matmul(invhessianStat,jacoutstat,transpose_b=True))
     impactStat = tf.sqrt(tf.matrix_diag_part(invhessoutStat))
     nuisancegroupimpactlist.append(impactStat)
 
     #bin by bin template statistical uncertainties
     if options.binByBinStat:
-      invhessianoutNoBBB = tf.matmul(jacout,tf.matmul(invhessianNoBBB,jacout,transpose_b=True))      
+      invhessianoutNoBBB = tf.matmul(jacoutNoBBB,tf.matmul(invhessianNoBBB,jacoutNoBBB,transpose_b=True))      
       impactBBB = tf.sqrt(tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:nout])
       nuisancegroupimpactlist.append(impactBBB)
     
@@ -1138,7 +1140,7 @@ for itoy in range(ntoys):
 
       for isystgroup, systgroup in enumerate(systgroupsfull):
         nuisanceGroupImpactHist.GetYaxis().SetBinLabel(isystgroup+1, '%s' % systgroup)
-      
+            
       array2hist(nuisanceimpactoutval,nuisanceImpactHist)
       array2hist(nuisancegroupimpactoutval,nuisanceGroupImpactHist)
 
