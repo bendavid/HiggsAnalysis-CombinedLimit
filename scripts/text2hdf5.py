@@ -147,6 +147,16 @@ for group in DC.chargeMetaGroups:
     chargemetagroupidx.append(sumgroups.index(proc))
   chargemetagroupidxs.append(chargemetagroupidx)
     
+#list of groups of signal processes for regularization
+reggroups = []
+reggroupidxs = []
+for igroup,group in enumerate(DC.regGroups):
+  reggroups.append(group)
+  reggroupidx = []
+  for proc in DC.regGroups[group]:
+    reggroupidx.append(procs.index(proc))
+  reggroupidxs.append(reggroupidx)
+
 #list of channels, ordered such that masked channels are last
 chans = []
 for chan in DC.bins:
@@ -541,6 +551,12 @@ hchargemetagroups[...] = chargemetagroups
 
 hchargemetagroupidxs = f.create_dataset("hchargemetagroupidxs", [len(chargemetagroups),2], dtype='int32', compression="gzip")
 hchargemetagroupidxs[...] = chargemetagroupidxs
+
+hreggroups = f.create_dataset("hreggroups", [len(reggroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hreggroups[...] = reggroups
+
+hreggroupidxs = f.create_dataset("hreggroupidxs", [len(reggroupidxs)], dtype=h5py.special_dtype(vlen=np.dtype('int32')), compression="gzip")
+hreggroupidxs[...] = reggroupidxs
 
 hmaskedchans = f.create_dataset("hmaskedchans", [len(maskedchans)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hmaskedchans[...] = maskedchans
