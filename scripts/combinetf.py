@@ -66,6 +66,10 @@ parser.add_option("","--postfix", default="",type="string", help="add _<postfix>
 parser.add_option("", "--outputDir", default="",type="string", help="Specify folder for output file (it is created if not existing). If SAME is given, use same folder as input file")
 parser.add_option("","--doImpacts", default=False, action='store_true', help="Compute impacts on POIs per nuisance parameter and per-nuisance parameter group")
 parser.add_option("","--useSciPyMinimizer", default=False, action='store_true', help="Use SciPy constrained trust region minimizer for instead of native tensorflow one")
+parser.add_option("","--doRegularization", default=False, action='store_true', help="Use curvature-based regularization if defined in datacard")
+parser.add_option("","--regularizationUseExpected", default=False, action='store_true', help="Use expectation in regularization (by regularizing mu instead of cross section)")
+parser.add_option("","--regularizationUseLog", default=False, action='store_true', help="Use logarithm of poi for curvature regularization")
+parser.add_option("","--regularizationTau", default=0.1, type=float, help="regularization strength")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -98,6 +102,8 @@ sumgroupsegmentids = f['hsumgroupsegmentids'][...]
 sumgroupidxs = f['hsumgroupidxs'][...]
 chargemetagroups = f['hchargemetagroups'][...]
 chargemetagroupidxs = f['hchargemetagroupidxs'][...]
+reggroups = f['hreggroups'][...]
+reggroupidxs = f['hreggroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
 
 #load arrays from file
@@ -125,6 +131,7 @@ nchargegroups = len(chargegroups)
 npolgroups = len(polgroups)
 nsumgroups = len(sumgroups)
 nchargemetagroups = len(chargemetagroups)
+nreggroups = len(reggroups)
 
 systgroupsfull = systgroups.tolist()
 systgroupsfull.append("stat")
@@ -518,6 +525,36 @@ if options.POIMode == "mu":
       
       outputnames.append(outputname)
 
+  #regularization
+  taureg = -1.
+  if options.doRegularization and nreggroups > 0:
+    if options.regularizationUseExpected:
+      regsource = poi
+    else:
+      regsource = pmaskedexp
+    
+    taureg = options.regularizationTau
+    lregs = tf.zeros_like(l)
+    for reggroupidx in reggroupidxs:
+      #construct matrix to form discrete 2nd derivatives
+      #as in arXiv:hep-ph/9509307v2 eq. 39
+      nreg = len(reggroupidx)
+      mones = tf.ones([nreg,nreg],dtype=dtype)
+      treg = tf.matrix_band_part(mones,1,1)
+      diagreg = tf.pad(-2.*tf.ones([nreg-2],dtype=dtype),[[1,1]],constant_values=-1.)
+      mreg = tf.linalg.set_diag(treg,diagreg)
+      
+      xreg = tf.gather(regsource,reggroupidx)
+      if options.regularizationUseLog:
+        xreg = tf.log(xreg)
+      vreg = tf.reshape(xreg,[-1,1])
+      lreg = tf.reduce_sum(tf.square(tf.matmul(mreg,vreg)))
+      lregs += lreg
+    
+    lregs *= taureg
+    l += lregs
+    lfull += lregs
+
 nthreadshess = options.nThreads
 if nthreadshess<0:
   nthreadshess = multiprocessing.cpu_count()
@@ -784,6 +821,9 @@ tree.Branch('ndof',tndof,'ndof/I')
 
 tndofpartial = array('i',[0])
 tree.Branch('ndofpartial',tndofpartial,'ndofpartial/I')
+
+ttaureg = array('d',[0.])
+tree.Branch('taureg',ttaureg,'taureg/D')
 
 toutvalss = []
 touterrss = []
@@ -1208,6 +1248,7 @@ for itoy in range(ntoys):
   tscanidx[0] = -1
   tndof[0] = x.shape[0]
   tndofpartial[0] = npoi
+  ttaureg[0] = taureg
   
   for output,outputname, outvals,outsigmas,minosups,minosdowns,outgenvals,toutvals,touterrs,toutminosups,toutminosdowns,toutgenvals in zip(outputs, outputnames, outvalss,outsigmass,outminosupss,outminosdownss,outvalsgens,toutvalss,touterrss,toutminosupss,toutminosdownss,toutgenvalss):
     #outname = ":".join(output.name.split(":")[:-1])    
