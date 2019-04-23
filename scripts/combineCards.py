@@ -38,7 +38,7 @@ obsline = []; obskeyline = [] ;
 keyline = []; expline = []; systlines = {}
 signals = []; backgrounds = []; shapeLines = []
 paramSysts = {}; flatParamNuisances = {}; discreteNuisances = {}; groups = {}; rateParams = {}; rateParamsOrder = set()
-chargeGroups = OrderedDict(); polGroups = OrderedDict(); sumGroups = OrderedDict(); chargeMetaGroups = OrderedDict();
+chargeGroups = OrderedDict(); polGroups = OrderedDict(); sumGroups = OrderedDict(); chargeMetaGroups = OrderedDict(); regGroups = OrderedDict();
 extArgs = {}; binParFlags = {}
 nuisanceEdits = [];
 
@@ -211,6 +211,16 @@ for ich,fname in enumerate(args):
         else:
             chargeMetaGroups[groupName] = procNames
 
+    for groupName,procNames in DC.regGroups.iteritems():
+        if groupName in regGroups:
+            if regGroups[groupName] == procNames:
+                continue
+            else:
+                raise RuntimeError, "Conflicting definition of regGroup %s" % groupName
+        else:
+            regGroups[groupName] = procNames
+
+
     # Finally report nuisance edits propagated to end of card
     for editline in DC.nuisanceEditLines:
       if len(editline)==2: nuisanceEdits.append("%s %s"%(editline[0]," ".join(editline[1])))
@@ -319,6 +329,9 @@ for groupName,procNames in sumGroups.iteritems():
 for groupName,procNames in chargeMetaGroups.iteritems():
     procs = ' '.join(procNames)
     print '%(groupName)s chargeMetaGroup = %(procs)s' % locals()
+for groupName,procNames in regGroups.iteritems():
+    procs = ' '.join(procNames)
+    print '%(groupName)s regGroup = %(procs)s' % locals()
 
 for bpf in binParFlags.iterkeys():
     if len(binParFlags[bpf]) == 1:
