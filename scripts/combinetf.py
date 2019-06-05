@@ -55,7 +55,7 @@ parser.add_option("","--scanPoints", default=16, type=int, help="default number 
 parser.add_option("","--scanRange", default=3., type=float, help="default scan range in terms of hessian uncertainty")
 parser.add_option("","--nThreads", default=-1., type=int, help="set number of threads (default is -1: use all available cores)")
 parser.add_option("","--POIMode", default="mu",type="string", help="mode for POI's")
-parser.add_option("","--nonNegativePOI", default=True, action='store_true', help="force signal strengths to be non-negative")
+parser.add_option("","--allowNegativePOI", default=False, action='store_true', help="allow signal strengths to be negative (otherwise constrained to be non-negative)")
 parser.add_option("","--POIDefault", default=1., type=float, help="mode for POI's")
 parser.add_option("","--doBenchmark", default=False, action='store_true', help="run benchmarks")
 parser.add_option("","--saveHists", default=False, action='store_true', help="save prefit and postfit histograms")
@@ -155,10 +155,10 @@ else:
   norm = maketensor(hnorm)
   logk = maketensor(hlogk)
 
-if options.nonNegativePOI:
-  boundmode = 1
-else:
+if options.allowNegativePOI:
   boundmode = 0
+else:
+  boundmode = 1
 
 pois = []  
   
@@ -410,6 +410,8 @@ if options.POIMode == "mu":
     outputname.append("%s_%s" % (signal,options.POIMode))
 outputnames.append(outputname)
   
+taureg = -1.
+  
 if options.POIMode == "mu":  
   if nbinsmasked>0:
     outputs.append(pmaskedexp)
@@ -526,7 +528,6 @@ if options.POIMode == "mu":
       outputnames.append(outputname)
 
   #regularization
-  taureg = -1.
   if options.doRegularization and nreggroups > 0:
     if options.regularizationUseExpected:
       regsource = poi
@@ -713,7 +714,7 @@ if options.useSciPyMinimizer:
   scipyminimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)}, options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
 else:
   tfminimizer = SR1TrustExact(l,x,grad)
-  opinit = tfminimizer.initialize(l,x,grad,hessian)
+  opinit = tfminimizer.initialize(l,x,grad)
   opmin = tfminimizer.minimize(l,x,grad)
 
 outidxmap = {}

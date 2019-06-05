@@ -236,8 +236,14 @@ class SR1TrustExact:
         t0 = tf.zeros_like(d)
 
         nupper = tf.minimum(1,tf.shape(d)[0])
-        deltamask = tf.matrix_band_part(tf.ones_like(deltam,dtype=tf.bool),tf.zeros_like(nupper),nupper)
-                  
+        deltambool = tf.ones_like(deltam,dtype=tf.bool)
+        deltamones = tf.ones_like(deltam)
+        deltamask = tf.matrix_band_part(deltambool,tf.zeros_like(nupper),nupper)
+        
+        deltamaskdiag = tf.matrix_band_part(deltambool,0,0)
+        deltamasklow  = tf.matrix_band_part(deltambool,-1,0) & tf.logical_not(deltamaskdiag)
+        deltamaskhigh  = tf.matrix_band_part(deltambool,0,-1)
+                
         unconverged0 = tf.ones_like(d,dtype=tf.bool)
                   
         loop_vars = [t0,unconverged0,tf.constant(0),t0]
@@ -420,20 +426,41 @@ class SR1TrustExact:
         phiout = tf.where(tswitch,phi,phi2)
         magphi = tf.reduce_sum(tf.square(phiout))
         
-
-        #dout = tf.Print(dout,[magphi],message="magphi")
+        #recompute z as in https://doi.org/10.1137/S089547989223924X to maintain orthogonality of eigenvectors
+        deltam1 = deltam[:,1:]
+        
+        deltam1num = tf.concat([deltam1,1.+deltam[:,-1:]],axis=-1)
+        deltam1den = tf.concat([deltam1,tf.ones_like(deltam[:,-1:])],axis=-1)
+        
+        prodmnum = deltam + tf.reshape(t,[1,-1])
+        prodmnum2 = deltam1num - tf.reshape(dt,[1,-1])
+        prodmnumswitch = tf.reshape(tswitch,[1,-1]) | tf.zeros_like(prodmnum, dtype=tf.bool)
+        prodmnum = tf.where(prodmnumswitch,prodmnum,prodmnum2)
+        
+        prodmdenlow = tf.where(deltamasklow,deltam,tf.zeros_like(deltam))
+        prodmdenhigh = tf.where(deltamaskhigh,deltam1den,tf.zeros_like(deltam1den))
+        
+        prodmden = prodmdenlow + prodmdenhigh
+        
+        nullden = tf.equal(prodmden,0.)
+        prodr = tf.where(nullden,tf.ones_like(prodmnum),prodmnum*tf.reciprocal(tf.where(nullden,tf.ones_like(prodmden),prodmden)))
+        prod = tf.reduce_prod(prodr,axis=-1)
+        absztilde = tf.sqrt(prod)
+        ztilde = tf.where(tf.greater_equal(z2,0.),absztilde,-absztilde)
         
         #now compute eigenvectors, with rows of this matrix constructed
         #from the solution with the higher numerical precision
         ti = tf.reshape(t,[-1,1])
         dti = tf.reshape(dt,[-1,1])
-        Dinv = tf.reciprocal(deltam - ti)        
-        Dinv2 = tf.reciprocal(deltam2 + dti)
-        
-        Dinvswitch = tf.reshape(tswitch,[-1,1]) | tf.zeros_like(Dinv, dtype=tf.bool)
-        Dinv = tf.where(Dinvswitch,Dinv,Dinv2)
+        tswitchi = tf.reshape(tswitch,[-1,1])
+        D = deltam - ti
+        D2 = deltam2 + dti
+        Dswitch = tf.reshape(tswitch,[-1,1]) | tf.zeros_like(D, dtype=tf.bool)
 
-        Dinvz = Dinv*tf.reshape(z2,[1,-1])
+        D = tf.where(Dswitch,D,D2)
+        Dinv = tf.reciprocal(tf.where(tf.equal(D,0.),tf.ones_like(D),D))
+
+        Dinvz = Dinv*tf.reshape(ztilde,[1,-1])
         Dinvzmag = tf.sqrt(tf.reduce_sum(tf.square(Dinvz),axis=-1,keepdims=True))
         Dinvz = Dinvz/Dinvzmag
         
@@ -444,15 +471,15 @@ class SR1TrustExact:
         #if t=0 the eigenvector is unchanged
         #if t=delta then the i+1st eigenvector is shifted
         #to the ith position
-        UT21 = tf.concat([UT2[1:],UT2[-1:]],axis=0)
-        tnull = tf.equal(ti,0.)
-        dtnull = tf.equal(dti,0.)        
+        UT21 = tf.concat([UT2[1:],UT2[-1:]],axis=0)      
+        tnull = tf.equal(ti,0.) & tswitchi
+        dtnull = tf.equal(dti,0.) & tf.logical_not(tswitchi)
         UT2false = tf.zeros_like(UT2,dtype=tf.bool)
         tnullm = tf.logical_or(UT2false,tnull)
         dtnullm = tf.logical_or(UT2false,dtnull)
         
         UT2out = tf.where(dtnullm,UT21,UT2out)
-        UT2out = tf.where(tnullm,UT2,UT2out)        
+        UT2out = tf.where(tnullm,UT2,UT2out)
                         
         #now put everything back together
         #eigenvalues are still guaranteed to be sorted
@@ -619,9 +646,6 @@ class SR1TrustExact:
       
       alist.append(varassign)
       return [isconverged,tf.group(alist)]
-
-
-
 
 
 class SR1TrustOBS:
