@@ -317,7 +317,8 @@ if options.binByBinStat:
       slogbeta = tf.matmul(norm,logbetafull,transpose_a=True)
     
     slogbeta = tf.reshape(slogbeta,[-1])
-    slogbeta = slogbeta*tf.reciprocal(tf.where(tf.equal(sumnormmasked,0.),tf.ones_like(sumnormmasked),sumnormmasked))
+    sumnormmaskednull = tf.equal(sumnormmasked,0.)
+    slogbeta = tf.where(sumnormmaskednull,tf.zeros_like(slogbeta),slogbeta)*tf.reciprocal(tf.where(sumnormmaskednull,tf.ones_like(sumnormmasked),sumnormmasked))
     
     expslogbeta = tf.exp(slogbeta)
     
