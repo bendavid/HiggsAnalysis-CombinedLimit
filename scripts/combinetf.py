@@ -240,14 +240,11 @@ if sparse:
   #other dimensions due to the ordering of the tensor,
   #after this the result should be relatively small in any case and  further
   #manipulations can be done more efficiently after converting to dense
-  snormnormmasked0_sparse = simple_sparse_slice0begin(snormnorm_sparse, nbins, doCache=True)
-  snormnormmasked0 = simple_sparse_to_dense(snormnormmasked0_sparse)
-  snormnormmasked = snormnormmasked0[:,:nsignals]
+  snormnormmasked_sparse = simple_sparse_slice0begin(snormnorm_sparse, nbins, doCache=True)
+  snormnormmasked = simple_sparse_to_dense(snormnormmasked_sparse)
   
-  normmasked0_sparse = simple_sparse_slice0begin(norm_sparse, nbins, doCache=True)
-  normmasked0 = simple_sparse_to_dense(normmasked0_sparse)
-  normmasked = normmasked0[:,:nsignals]
-  
+  normmasked_sparse = simple_sparse_slice0begin(norm_sparse, nbins, doCache=True)
+  normmasked = simple_sparse_to_dense(normmasked_sparse)  
   
   #TODO consider doing this one column at a time to save memory
   if options.saveHists:
@@ -281,14 +278,14 @@ else:
   nexpfullcentral = tf.matmul(snormnorm, mrnorm)
   nexpfullcentral = tf.squeeze(nexpfullcentral,-1)
 
-  snormnormmasked = snormnorm[nbins:,:nsignals]
+  snormnormmasked = snormnorm[nbins:]
   
-  normmasked = norm[nbins:,:nsignals]
+  normmasked = norm[nbins:]
   
   if options.saveHists:
     normfullcentral = ernorm*snormnorm
     
-pmaskedexp = r*tf.reduce_sum(snormnormmasked,axis=0)
+pmaskedexp = rnorm*tf.reduce_sum(snormnormmasked,axis=0)
 
 maskedexp = nexpfullcentral[nbins:]
 
@@ -320,12 +317,13 @@ if options.binByBinStat:
       slogbeta = tf.matmul(norm,logbetafull,transpose_a=True)
     
     slogbeta = tf.reshape(slogbeta,[-1])
-    slogbetasig = slogbeta[:nsignals]/sumnormmasked
+    sumnormmaskednull = tf.equal(sumnormmasked,0.)
+    slogbeta = tf.where(sumnormmaskednull,tf.zeros_like(slogbeta),slogbeta)*tf.reciprocal(tf.where(sumnormmaskednull,tf.ones_like(sumnormmasked),sumnormmasked))
     
-    expslogbetasig = tf.exp(slogbetasig)
+    expslogbeta = tf.exp(slogbeta)
     
-    pmaskedexp *= expslogbetasig
-    snormnormmasked *= tf.reshape(expslogbetasig,[1,-1])
+    pmaskedexp *= expslogbeta
+    snormnormmasked *= tf.reshape(expslogbeta,[1,-1])
     
     
   if options.saveHists:
@@ -346,10 +344,10 @@ else:
 mmaskedexpr = tf.expand_dims(tf.reciprocal(maskedexp),0)
 pmaskedexpnorm = tf.matmul(mmaskedexpr,snormnormmasked)
 pmaskedexpnorm = tf.squeeze(pmaskedexpnorm,0)
-pmaskedexpnorm = r*pmaskedexpnorm
+pmaskedexpnorm = rnorm*pmaskedexpnorm
 
-  
-
+pmaskedexpsig = pmaskedexp[:nsignals]
+pmaskedexpnormsig = pmaskedexpnorm[:nsignals]
   
 if options.saveHists:
   nexpsigcentral = tf.reduce_sum(normfullcentral[:,:nsignals],axis=-1)
@@ -396,8 +394,8 @@ if options.binByBinStat:
  
 #name outputs
 poi = tf.identity(poi, name=options.POIMode)
-pmaskedexp = tf.identity(pmaskedexp, "pmaskedexp")
-pmaskedexpnorm = tf.identity(pmaskedexpnorm, "pmaskedexpnorm")
+pmaskedexpsig = tf.identity(pmaskedexpsig, "pmaskedexp")
+pmaskedexpnormsig = tf.identity(pmaskedexpnormsig, "pmaskedexpnorm")
  
 outputs = []
 outputnames = []
@@ -414,8 +412,8 @@ taureg = -1.
   
 if options.POIMode == "mu":  
   if nbinsmasked>0:
-    outputs.append(pmaskedexp)
-    outputs.append(pmaskedexpnorm)
+    outputs.append(pmaskedexpsig)
+    outputs.append(pmaskedexpnormsig)
     
     outputname = []
     for signal in signals:
