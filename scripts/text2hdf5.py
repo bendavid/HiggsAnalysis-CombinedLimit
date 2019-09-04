@@ -100,12 +100,13 @@ nsyst = len(systs)
 #list of groups of systematics (nuisances) and lists of indexes
 systgroups = []
 systgroupidxs = []
-for group in DC.groups:
-  systgroups.append(group)
-  systgroupidx = []
-  for syst in DC.groups[group]:
-    systgroupidx.append(systs.index(syst))
-  systgroupidxs.append(systgroupidx)
+if options.doSystematics:
+  for group in DC.groups:
+    systgroups.append(group)
+    systgroupidx = []
+    for syst in DC.groups[group]:
+      systgroupidx.append(systs.index(syst))
+    systgroupidxs.append(systgroupidx)
     
 #list of groups of signal processes by charge
 chargegroups = []
