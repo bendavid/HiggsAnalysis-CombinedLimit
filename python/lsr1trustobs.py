@@ -24,12 +24,24 @@ class SR1TrustExact:
     alist = []
     alist.append(tf.assign(self.var_old,var))
     alist.append(tf.assign(self.grad_old,grad))
+    alist.append(self.trustradius.initializer)
+    alist.append(self.loss_old.initializer)
+    alist.append(self.predicted_reduction.initializer)
+    alist.append(self.var_old.initializer)
+    alist.append(self.atboundary_old.initializer)
+    alist.append(self.doiter_old.initializer)
+    alist.append(self.grad_old.initializer)
+    alist.append(self.isfirstiter.initializer)
+    alist.append(self.doscaling.initializer)
     
     if B is not None:
       e,U = tf.self_adjoint_eig(B)
       UT = tf.transpose(U)
       alist.append(tf.assign(self.e,e))
       alist.append(tf.assign(self.UT,UT))
+    else:
+      alist.append(self.e.initializer)
+      alist.append(self.UT.initializer)
     return tf.group(alist)
   
   def minimize(self, loss, var, grad = None):

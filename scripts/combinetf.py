@@ -38,6 +38,10 @@ from array import array
 
 from HiggsAnalysis.CombinedLimit.tfscipyhess import ScipyTROptimizerInterface,jacobian,sum_loop
 
+from scipy.optimize import SR1
+from scipy.optimize import minimize as scipyminimize
+import matplotlib.pyplot as plt
+
 parser = OptionParser(usage="usage: %prog [options] datacard.txt -o output \nrun with --help to get list of options")
 parser.add_option("-o","--output", default=None, type="string", help="output file name")
 parser.add_option("-t","--toys", default=0, type=int, help="run a given number of toys, 0 fits the data (default), and -1 fits the asimov toy")
@@ -53,6 +57,7 @@ parser.add_option("","--minos", default=[], type="string", action="append", help
 parser.add_option("","--scan", default=[], type="string", action="append", help="run likelihood scan on the specified variables")
 parser.add_option("","--scanPoints", default=16, type=int, help="default number of points for likelihood scan")
 parser.add_option("","--scanRange", default=3., type=float, help="default scan range in terms of hessian uncertainty")
+parser.add_option("","--scanRangeUsePrefit", default=False, action='store_true', help="use prefit uncertainty to define scan range")
 parser.add_option("","--nThreads", default=-1., type=int, help="set number of threads (default is -1: use all available cores)")
 parser.add_option("","--POIMode", default="mu",type="string", help="mode for POI's")
 parser.add_option("","--allowNegativePOI", default=False, action='store_true', help="allow signal strengths to be negative (otherwise constrained to be non-negative)")
@@ -294,6 +299,14 @@ nexpcentral = nexpfullcentral[:nbins]
 if options.binByBinStat:
   #beta = (nobs + kstat - 1.)/(nexpcentral+kstat)
   beta = (nobs + kstat)/(nexpcentral+kstat)
+  #beta = -2.*nobs/(-nexpcentral*(1.-kstat) + tf.sqrt(tf.square(nexpcentral*(1.-kstat)) + 4.*kstat*nexpcentral*nobs))
+  #beta = (nexpcentral*(kstat-1.) + tf.sqrt(tf.square(nexpcentral*(kstat-1.)) + 4.*kstat*nobs))/(2.*kstat)
+  
+  #betab = nexpcentral - kstat
+  #beta = 0.5*(-betab + tf.sqrt(betab*betab + 4.*kstat*nobs))/kstat
+  #betaalt = -2.*nobs/(-betab - tf.sqrt(betab*betab + 4.*kstat*nobs))
+  #beta = tf.where(tf.greater(betab,0.),betaalt,beta)
+  
   betagen = tf.Variable(tf.ones([nbins],dtype=dtype),name="betagen")
   #beta = tf.Print(beta,[beta],message="beta",summarize=10000)
   nexp = beta*nexpcentral
@@ -381,13 +394,15 @@ l = ln + lc
 lfull = lnfull + lc
 
 if options.binByBinStat:
-  #lbetav = -(kstat-1.)*tf.log(beta) + kstat*beta
+  #lbetavfull = -(kstat-1.)*tf.log(beta) + kstat*beta
   lbetavfull = -kstat*tf.log(beta) + kstat*beta
   #lbetavfull = tf.where(nobsnull,tf.zeros_like(lbetavfull),lbetavfull)
+  #lbetavfull = 0.5*kstat*tf.square(beta-1.)
   lbetafull = tf.reduce_sum(lbetavfull)
   
   lbetav = lbetavfull - kstat
   lbeta = tf.reduce_sum(lbetav)
+  #lbeta = lbetafull
   
   l = l + lbeta
   lfull = lfull + lbetafull
@@ -562,8 +577,10 @@ nthreadshess = min(nthreadshess,nparms)
 grad = tf.gradients(l,x,gate_gradients=True)[0]  
 hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
 
-eigvals = tf.self_adjoint_eigvals(hessian)
+#eigvals = tf.self_adjoint_eigvals(hessian)
+eigvals,eigvects = tf.self_adjoint_eig(hessian)
 mineigv = tf.reduce_min(eigvals)
+UT = tf.transpose(eigvects)
 isposdef = mineigv > 0.
 invhessian = tf.matrix_inverse(hessian)
 gradcol = tf.reshape(grad,[-1,1])
@@ -779,7 +796,7 @@ if options.outputDir:
 
 fname = outdir + 'fitresults_%i.root' % seed
 if options.postfix: fname = fname.replace(".root","_{pf}.root".format(pf=options.postfix))
-f = ROOT.TFile( fname , 'recreate' )
+fout = ROOT.TFile( fname , 'recreate' )
 tree = ROOT.TTree("fitresults", "fitresults")
 
 tseed = array('i', [seed])
@@ -824,6 +841,27 @@ tree.Branch('ndofpartial',tndofpartial,'ndofpartial/I')
 ttaureg = array('d',[0.])
 tree.Branch('taureg',ttaureg,'taureg/D')
 
+maxorder = 5
+tsmoothchisqs = []
+tsmoothndofs = []
+tsmoothstatuses = []
+
+for n in range(maxorder+1):
+  tsmoothchisq = array('d',[0.])
+  tree.Branch('smoothchisq_%d' % n, tsmoothchisq, 'smoothchisq_%d/D' % n)
+  tsmoothchisqs.append(tsmoothchisq)
+
+  tsmoothndof = array('i',[0])
+  tree.Branch('smoothndof_%d' % n, tsmoothndof, 'smoothndof_%d/I' % n)
+  tsmoothndofs.append(tsmoothndof)
+
+  tsmoothstatus = array('i',[0])
+  tree.Branch('smoothstatus_%d' % n, tsmoothstatus, 'smoothstatus_%d/I' % n)
+  tsmoothstatuses.append(tsmoothstatus)
+
+toutchisqs = []
+toutndofs = []
+
 toutvalss = []
 touterrss = []
 toutminosupss = []
@@ -832,9 +870,17 @@ toutgenvalss = []
 #outnames = []
 #outidxs = {}
 for output,outputname in zip(outputs,outputnames):
-  #outname = ":".join(output.name.split(":")[:-1])
+  outname = ":".join(output.name.split(":")[:-1])
   #outnames.append(outname)
   #outidxs[outname] = iout
+  
+  toutchisq = array('f',[0.])
+  toutchisqs.append(toutchisq)
+  tree.Branch('%s_chisq' % outname, toutchisq, '%s_chisq/F' % outname)
+              
+  toutndof = array('i',[0])
+  toutndofs.append(toutndof)
+  tree.Branch('%s_ndof' % outname, toutndof, '%s_ndof/I' % outname)
   
   toutvals = []
   touterrs = []
@@ -893,6 +939,155 @@ for syst in systs:
   tree.Branch('%s_minosdown' % systname, tthetaminosdown, '%s_minosdown/F' % systname)
   tree.Branch('%s_gen' % systname, tthetagenval, '%s_gen/F' % systname)
 
+doh5output = False
+
+if doh5output:
+  #initialize h5py output
+  h5fout = h5py_cache.File('fitresults_%i.hdf5' % seed, chunk_cache_mem_size=cacheSize, mode='w')
+
+  #copy some info to output file
+  f.copy('hreggroups',h5fout)
+  f.copy('hreggroupidxs',h5fout)
+
+  outnames = []
+  for output,outputname in zip(outputs,outputnames):
+    outname = ":".join(output.name.split(":")[:-1])
+    outnames.append(outname)
+    hnames = h5fout.create_dataset("%s_names" % outname, [len(outputname)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+    hnames[...] = outputname
+
+  houtnames = h5fout.create_dataset("outnames", [len(outnames)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+  houtnames[...] = outnames
+
+#smoothness test
+def dosmoothnessfit(n=0,lregouts=None,flatregcov=None,lidxs=None,outcov=None,doplotting=False):
+  nregs = len(lregouts)
+  nparms = (n+1)
+  nparmsfull = nregs*nparms
+  print(nparms)
+  
+  nbinsfull = 0
+  for regout in lregouts:
+    nbinsfull += len(regout)
+
+  
+  xvals = np.array([0.125, 0.375, 0.625, 0.875, 1.125, 1.375, 1.625, 1.875, 2.125, 2.375],dtype='float64')
+  #xvals = xvals[:maxbins]
+  
+  p0 = np.zeros([nparmsfull],dtype='float64')
+  
+  for ireg,regout in enumerate(lregouts):
+    p0[ireg*nparms] = np.mean(regout)
+  
+  def fs(ireg,xs,p):
+    pi = p[ireg*nparms:(ireg+1)*nparms]
+    fvals = np.zeros_like(xs)
+    for j,pj in enumerate(pi):
+      fvals += pj*np.power(xs,j)
+    return fvals
+  
+  def chisqloss(p,doplots=False):
+    deltas = []
+      
+    
+    jacdelta = np.zeros([nparmsfull,nbinsfull],dtype='float64')
+    ibin = 0
+    for ireg,regout in enumerate(lregouts):
+      nbins = len(regout)
+      #pi = p[ireg*nparms:(ireg+1)*nparms]
+      #fvals = np.zeros_like(xvals)
+      #for j,pj in enumerate(pi):
+      ixvals = xvals[:nbins]
+        #fvals += pj*np.power(xvals,j)
+      fvals = fs(ireg,ixvals,p)
+      
+      pi = p[ireg*nparms:(ireg+1)*nparms]
+      for j,pj in enumerate(pi):
+        jacdelta[ireg*nparms + j,ibin:ibin+nbins] = np.power(ixvals,j)
+      
+      #delta = regout - fvals
+      delta = fvals - regout
+      #print("delta test:")
+      #print(regout)
+      #print(fvals)
+      #print(delta)
+      deltas.append(delta)
+      
+      ibin += nbins
+      
+      if doplots:
+        xfine = np.linspace(0.,2.5,100)
+        fvalsfine = fs(ireg,xfine,p)
+        #errs = np.sqrt(np.diag(flatregcov))[ireg*nbins:(ireg+1)*nbins]
+        errs = np.sqrt(np.diag(outcov))[lidxs[ireg]]
+        
+        xerrs = 0.125*np.ones_like(regout)
+        
+        plt.figure()
+        #sreg = plt.scatter(xvals,regout)
+        sreg = plt.errorbar(ixvals,regout,yerr=errs,xerr=xerrs,fmt='.')
+        #sreg = plt.errorbar(ixvals,regout,xerr=xerrs,fmt='.')
+        sfunc = plt.plot(xfine,fvalsfine)
+        plt.ylim(bottom=0.)
+        
+      
+    delta = np.concatenate(deltas,axis=0)
+    deltacol = np.reshape(delta,[-1,1])
+    deltainvcov = np.linalg.solve(flatregcov,deltacol)
+    chisq = np.matmul(np.transpose(deltacol),deltainvcov)
+    chisq = np.reshape(chisq,[])
+    
+    ###print("jacdelta:")
+    #print(jacdelta)
+    
+    chisqgrad = 2.*np.matmul(jacdelta,deltainvcov)
+    #print("chisqgradshape")
+    #print(chisqgrad.shape)
+    
+    chisqgrad = np.reshape(chisqgrad,[-1])
+    
+    #grad = np.reshape(2.*deltainvcov,[-1])
+    
+    return (chisq,chisqgrad)
+      
+  print(chisqloss(p0))
+        
+  xtol = np.finfo('float64').eps
+  
+  #res = scipyminimize(chisqloss,p0,method='trust-constr',options={'disp': True, 'maxiter': int(1e6), 'gtol' : 0., 'xtol' : xtol},jac=False,hess=SR1(),)
+  #res = scipyminimize(chisqloss,p0,method='trust-constr',options={'disp': True, 'maxiter': int(20e3)},jac=False,hess=SR1(),)
+  
+  #res = scipyminimize(chisqloss,p0,method='trust-constr',options={'disp': True, 'maxiter': int(20e3)},jac=True,hess=SR1(),)
+  res = scipyminimize(chisqloss,p0,method='trust-constr',options={'disp': True, 'maxiter': int(20e3), 'gtol' : 0., 'xtol' : xtol},jac=True,hess=SR1(),)
+  xres = res.x
+  status = res.status
+  #print(xres)
+  #print("status:")
+  #print(res.status)
+  
+  chisq,chisqgrad = chisqloss(xres,doplots=doplotting)
+  print("Chisq:")
+  print(chisq)
+  print(chisqgrad)
+  
+  nvals = flatregcov.shape[0]
+  ndof = nvals - nparmsfull
+  #ndof = len(flatregvals) - nparmsfull
+  
+  chisqndof = chisq/float(ndof)
+  
+  print('ndof = %d' % ndof)
+  print("chisq/ndof = %f" % chisqndof)
+  
+  prob = ROOT.TMath.Prob(chisq,ndof)
+  print("prob = %f" % prob)
+  #print(res.status)
+  #print(res.x)
+  
+  return (chisq,ndof,status)
+                         
+
+
 ntoys = options.toys
 if ntoys <= 0:
   ntoys = 1
@@ -920,11 +1115,14 @@ outvalsgens,thetavalsgen = sess.run([outputs,theta])
 
 #all caches should be filled by now
 
-def minimize():
+def minimize(evs=None,UTval=None):
   if options.useSciPyMinimizer:
     scipyminimizer.minimize(sess)
   else:
     sess.run(opinit)
+    if evs is not None:
+      tfminimizer.e.load(evs,sess)
+      tfminimizer.UT.load(UTval,sess)
     ifit = 0
     while True:
       isconverged,_ = sess.run(opmin)
@@ -971,6 +1169,32 @@ def fillHists(tag, witherrors=options.computeHistErrors):
     if witherrors:
       normprocerrval = normfullerrval[:,iproc]
     array2hist(normprocval, expHist,errors=normprocerrval)
+  
+  #additional set of postfit histograms taking central value without bin-by-bin uncertainties, but including them in the uncertainties
+  if tag=='postfit' and options.binByBinStat:
+    tag = 'postfit_hybrid'
+    normfullval, nexpfullval, nexpsigval, nexpbkgval = sess.run([normfullcentral,nexpfullcentral,nexpsigcentral,nexpbkgcentral])
+  
+    expfullHist = ROOT.TH1D('expfull_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+    hists.append(expfullHist)
+    array2hist(nexpfullval,expfullHist, errors=nexpfullerrval)
+    
+    expsigHist = ROOT.TH1D('expsig_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+    hists.append(expsigHist)
+    array2hist(nexpsigval,expsigHist, errors=nexpsigerrval)
+    
+    expbkgHist = ROOT.TH1D('expbkg_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+    hists.append(expbkgHist)
+    array2hist(nexpbkgval,expbkgHist, errors=nexpbkgerrval)
+    
+    for iproc,proc in enumerate(procs):
+      expHist = ROOT.TH1D('expproc_%s_%s' % (proc,tag),'',nbinsfull,-0.5, float(nbinsfull)-0.5)
+      hists.append(expHist)
+      normprocval = normfullval[:,iproc]
+      normprocerrval = None
+      if witherrors:
+        normprocerrval = normfullerrval[:,iproc]
+      array2hist(normprocval, expHist,errors=normprocerrval)  
   
   print("done filling hists")
   
@@ -1060,6 +1284,8 @@ for itoy in range(ntoys):
     
     exit()
   
+  outvalssprefit = sess.run(outputs)
+  
   if options.saveHists and not options.toys > 1:
     nobsval = sess.run(nobs)
     obsHist = ROOT.TH1D('obs','',nbins,-0.5, float(nbins)-0.5)
@@ -1067,29 +1293,40 @@ for itoy in range(ntoys):
     
     prefithists = fillHists('prefit')
   
-  if dofit:
-    minimize()
-
-  #get fit output
-  xval, outvalss, thetavals, theta0vals, nllval, nllvalfull = sess.run([x,outputs,theta,theta0,l,lfull])
-  dnllval = 0.
-  #get inverse hessians for error calculation (can fail if matrix is not invertible)
-  try:
-    invhessval,mineigval,isposdefval,edmval,invhessoutvals = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts])
-    errstatus = 0
-  except:
-    edmval = -99.
-    isposdefval = False
-    mineigval = -99.
-    invhessoutvals = outvalss
-    errstatus = 1
-    
-  if isposdefval and edmval > -edmtol:
-    status = 0
-  else:
-    status = 1
+  evs = None
+  UTval = None
   
-  print("status = %i, errstatus = %i, nllval = %f, nllvalfull = %f, edmval = %e, mineigval = %e" % (status,errstatus,nllval,nllvalfull,edmval,mineigval))  
+  for ifit in range(2):
+    if dofit:
+      minimize(evs,UTval)
+      
+    #get fit output
+    xval, outvalss, thetavals, theta0vals, nllval, nllvalfull = sess.run([x,outputs,theta,theta0,l,lfull])
+    dnllval = 0.
+    #get inverse hessians for error calculation (can fail if matrix is not invertible)
+    try:
+      #invhessval,mineigval,isposdefval,edmval,invhessoutvals = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts])
+      invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT])
+      errstatus = 0
+    except:
+      edmval = -99.
+      isposdefval = False
+      mineigval = -99.
+      invhessoutvals = outvalss
+      errstatus = 1
+      evs = None
+      UTval = None
+      
+    if isposdefval and edmval > -edmtol:
+      status = 0
+    else:
+      status = 1
+    
+    print("status = %i, errstatus = %i, nllval = %f, nllvalfull = %f, edmval = %e, mineigval = %e" % (status,errstatus,nllval,nllvalfull,edmval,mineigval))  
+    
+    edmtolretry = 1e-3
+    if isposdefval and edmval < edmtolretry and edmval>=0.:
+      break
   
   if errstatus==0:
     fullsigmasv = np.sqrt(np.diag(invhessval))
@@ -1105,17 +1342,56 @@ for itoy in range(ntoys):
   outminosdownss = []
   outminosupd = {}
   outminosdownd = {}
+  
+  outchisqs = []
+
+  rtchisqs = []
+  rtndofs = []
+  rtstatuses = []
 
   #list of hists to prevent garbage collection
   hists = []
 
-  for output, outputname, outvals,invhessoutval in zip(outputs, outputnames, outvalss,invhessoutvals):
+  for output, outputname, outvals,outvalsprefit,invhessoutval in zip(outputs, outputnames, outvalss,outvalssprefit,invhessoutvals):
     outname = ":".join(output.name.split(":")[:-1])
     outthetanames = outputname + systs.tolist()
     nout = len(outputname)
     nparmsout = len(outthetanames)
 
-    if not options.toys > 0:
+    if outname=="pmaskedexp":
+      doSmoothnessTest = False
+      doplotting=False
+      if doSmoothnessTest and errstatus==0:
+        #set up smooth function test based on regularization groups
+        rtlidxs = []
+        rtlregouts = []
+        rtoutvals = pmaskedexp
+        for iidxs,idxs in enumerate(reggroupidxs):
+          rtlidxs.append(idxs)
+          rtlregouts.append(outvals[idxs])
+          
+        rtflatidxs = np.concatenate(rtlidxs,axis=0)
+        rtflatregvals = outvals[rtflatidxs]
+        rtflatregcov = invhessoutval
+        rtflatregcov = rtflatregcov[rtflatidxs,:]
+        rtflatregcov = rtflatregcov[:,rtflatidxs]
+        
+        for n in range(maxorder+1):
+          rtchisq, rtndof, rtstatus = dosmoothnessfit(n,rtlregouts,rtflatregcov,rtlidxs,outcov=invhessoutval,doplotting=doplotting)
+          rtchisqs.append(rtchisq)
+          rtndofs.append(rtndof)
+          rtstatuses.append(rtstatus)
+        
+        if doplotting:
+          plt.show()
+          input("wait for input:")
+      else:
+        for n in range(maxorder+1):
+          rtchisqs.append(-99.)
+          rtndofs.append(-99)
+          rtstatuses.append(-99)
+
+    if not options.toys > 1:
       dName = 'asimov' if options.toys < 0 else 'data fit'
       correlationHist = ROOT.TH2D('correlation_matrix_channel'+outname, 'correlation matrix for '+dName+' in channel'+outname, nparmsout, 0., 1., nparmsout, 0., 1.)
       covarianceHist  = ROOT.TH2D('covariance_matrix_channel' +outname, 'covariance matrix for ' +dName+' in channel'+outname, nparmsout, 0., 1., nparmsout, 0., 1.)
@@ -1132,10 +1408,29 @@ for itoy in range(ntoys):
         correlationHist.GetYaxis().SetBinLabel(ip1+1, '%s' % p1)
         covarianceHist.GetXaxis().SetBinLabel(ip1+1, '%s' % p1)
         covarianceHist.GetYaxis().SetBinLabel(ip1+1, '%s' % p1)
+        
+      if doh5output:
+        houtvals = h5fout.create_dataset("%s_outvals" % outname, outvals.shape, dtype=outvals.dtype, compression="gzip")
+        houtvals[...] = outvals
+        
+        houtcov = h5fout.create_dataset("%s_outcov" % outname, invhessoutval.shape, dtype=invhessoutval.dtype, compression="gzip")
+        houtcov[...] = invhessoutval
 
     if errstatus==0:
       parameterErrors = np.sqrt(np.diag(invhessoutval))
       sigmasv = parameterErrors[:nout]
+      #compute chisq for outputs wrt prefit
+      deltaout = outvals-outvalsprefit
+      deltaoutcol = np.reshape(deltaout,[-1,1])
+      covdelta = invhessoutval[:nout,:nout]
+      try:
+        chisq = np.matmul(np.transpose(deltaoutcol),np.linalg.solve(covdelta,deltaoutcol))
+      except:
+        chisq = -99.
+      print("Chisq:")
+      print([outname,nout,chisq])
+      outchisqs.append(chisq)
+      
       if not options.toys > 0:
         variances2D     = parameterErrors[np.newaxis].T * parameterErrors
         correlationMatrix = np.divide(invhessoutval, variances2D)
@@ -1143,7 +1438,8 @@ for itoy in range(ntoys):
         array2hist(invhessoutval, covarianceHist)
     else:
       sigmasv = -99.*np.ones_like(outvals)
-    
+      outchsqs.append(-99.)
+          
     minoserrsup = -99.*np.ones_like(sigmasv)
     minoserrsdown = -99.*np.ones_like(sigmasv)
     
@@ -1260,6 +1556,11 @@ for itoy in range(ntoys):
       if itoy==0:
         print('%s = %e +- %f (+%f -%f)' % (name,outval,outma,minosup,minosdown))
 
+  for output,outputname,outchisq,toutchisq,toutndof in zip(outputs,outputnames,outchisqs,toutchisqs,toutndofs):
+    nout = len(outputname)
+    toutchisq[0] = outchisq
+    toutndof[0] = nout
+
   for syst,thetaval,theta0val,sigma,minosup,minosdown,thetagenval, tthetaval,ttheta0val,tthetaerr,tthetaminosup,tthetaminosdown,tthetagenval in zip(systs,thetavals,theta0vals,thetasigmasv,thetaminosups,thetaminosdowns,thetavalsgen, tthetavals,ttheta0vals,tthetaerrs,tthetaminosups,tthetaminosdowns,tthetagenvals):
     tthetaval[0] = thetaval
     ttheta0val[0] = theta0val
@@ -1269,6 +1570,11 @@ for itoy in range(ntoys):
     tthetagenval[0] = thetagenval
     if itoy==0:
       print('%s = %f +- %f (+%f -%f) (%s_In = %f)' % (syst, thetaval, sigma, minosup,minosdown,syst,theta0val))
+    
+  for rtchisq,rtndof,rtstatus,tsmoothchisq,tsmoothndof,tsmoothstatus in zip(rtchisqs,rtndofs,rtstatuses,tsmoothchisqs,tsmoothndofs,tsmoothstatuses):
+    tsmoothchisq[0] = rtchisq
+    tsmoothndof[0] = rtndof
+    tsmoothstatus[0] = rtstatus
     
   tree.Fill()
   
@@ -1314,7 +1620,10 @@ for itoy in range(ntoys):
         if absdsig==0. and sign==-1.:
           continue
         
-        aval = dsig*sigmasv[erroutidx]
+        if options.scanRangeUsePrefit:
+          aval = dsig
+        else:
+          aval = dsig*sigmasv[erroutidx]
         
         a.load(aval,sess)
         scanminimizer.minimize(sess)
@@ -1337,5 +1646,5 @@ for itoy in range(ntoys):
         tree.Fill()
 
 
-f.Write()
-f.Close()
+fout.Write()
+fout.Close()
