@@ -75,6 +75,9 @@ parser.add_option("","--doRegularization", default=False, action='store_true', h
 parser.add_option("","--regularizationUseExpected", default=False, action='store_true', help="Use expectation in regularization (by regularizing mu instead of cross section)")
 parser.add_option("","--regularizationUseLog", default=False, action='store_true', help="Use logarithm of poi for curvature regularization")
 parser.add_option("","--regularizationTau", default=0.1, type=float, help="regularization strength")
+parser.add_option("","--doh5Output", default=False, action='store_true', help="store additional h5py output for offline analyis/debugging")
+parser.add_option("","--doSmoothnessTest", default=False, action='store_true', help="run statistical smoothness test on absolute cross sections based on polynomial fits to regularization groups")
+parser.add_option("","--smoothnessTestMaxOrder", default=4, type=int, help="maximum polynomial order for smoothness test")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -841,7 +844,7 @@ tree.Branch('ndofpartial',tndofpartial,'ndofpartial/I')
 ttaureg = array('d',[0.])
 tree.Branch('taureg',ttaureg,'taureg/D')
 
-maxorder = 5
+maxorder = options.smoothnessTestMaxOrder
 tsmoothchisqs = []
 tsmoothndofs = []
 tsmoothstatuses = []
@@ -939,7 +942,7 @@ for syst in systs:
   tree.Branch('%s_minosdown' % systname, tthetaminosdown, '%s_minosdown/F' % systname)
   tree.Branch('%s_gen' % systname, tthetagenval, '%s_gen/F' % systname)
 
-doh5output = False
+doh5output = options.doh5Output
 
 if doh5output:
   #initialize h5py output
@@ -1359,7 +1362,7 @@ for itoy in range(ntoys):
     nparmsout = len(outthetanames)
 
     if outname=="pmaskedexp":
-      doSmoothnessTest = False
+      doSmoothnessTest = options.doSmoothnessTest
       doplotting=False
       if doSmoothnessTest and errstatus==0:
         #set up smooth function test based on regularization groups
