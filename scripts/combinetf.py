@@ -38,7 +38,7 @@ from array import array
 
 from HiggsAnalysis.CombinedLimit.tfscipyhess import ScipyTROptimizerInterface,jacobian,sum_loop
 
-from scipy.optimize import SR1
+from scipy.optimize import SR1, Bounds
 from scipy.optimize import minimize as scipyminimize
 import matplotlib.pyplot as plt
 
@@ -99,6 +99,7 @@ f = h5py_cache.File(options.fileName, chunk_cache_mem_size=cacheSize, mode='r')
 procs = f['hprocs'][...]
 signals = f['hsignals'][...]
 systs = f['hsysts'][...]
+systsnoprofile = f['hsystsnoprofile'][...]
 systgroups = f['hsystgroups'][...]
 systgroupidxs = f['hsystgroupidxs'][...]
 chargegroups = f['hchargegroups'][...]
@@ -133,6 +134,7 @@ nbins = hdata_obs.shape[-1]
 nbinsmasked = nbinsfull - nbins
 nproc = len(procs)
 nsyst = len(systs)
+nsystnoprofile = len(systsnoprofile)
 nsignals = len(signals)
 nsystgroups = len(systgroups)
 nchargegroups = len(chargegroups)
@@ -182,6 +184,8 @@ else:
   raise Exception("unsupported POIMode")
 
 nparms = npoi + nsyst
+nprof = nparms - nsystnoprofile
+
 parms = np.concatenate([pois,systs])
 
 if boundmode==0:
@@ -189,7 +193,7 @@ if boundmode==0:
 elif boundmode==1:
   xpoidefault = tf.sqrt(poidefault)
 
-print("nbins = %d, nbinsfull = %d, nproc = %d, npoi = %d, nsyst = %d" % (nbins,nbinsfull,nproc, npoi, nsyst))
+print("nbins = %d, nbinsfull = %d, nproc = %d, npoi = %d, nsyst = %d, nsystnoprofile = %d" % (nbins,nbinsfull,nproc, npoi, nsyst, nsystnoprofile))
 
 #data
 nobs = tf.Variable(data_obs, trainable=False, name="nobs")
@@ -580,14 +584,43 @@ nthreadshess = min(nthreadshess,nparms)
 grad = tf.gradients(l,x,gate_gradients=True)[0]  
 hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
 
-#eigvals = tf.self_adjoint_eigvals(hessian)
-eigvals,eigvects = tf.self_adjoint_eig(hessian)
+def invhessnoprofile(hess):
+  #manipulate hessian to enforce prefit covariance structure (unit diagonal) for non-profiled nuisances
+  nprof = nparms - nsystnoprofile
+  
+  #break up hessian into profiled part, and impact table for non-profiled nuisances
+  hp = hess[:nprof,:nprof]
+  hi = hess[:nprof,nprof:]
+  
+  #compute corresponding blocks of covariance matrix and reassemble
+  eyep = tf.eye(nprof,dtype=dtype)
+  invhp = tf.matrix_inverse(hp)
+  ci = -tf.matmul(invhp,hi)
+  cp = invhp + tf.matmul(ci,ci,transpose_b=True)
+  cf = tf.eye(nsystnoprofile,dtype=dtype)
+  
+  cu = tf.concat([cp,ci],axis=-1)
+  cl = tf.concat([tf.transpose(ci),cf],axis=-1)
+  
+  invhess = tf.concat([cu,cl],axis=0)
+  return invhess,hp,invhp
+  
+
+if nsystnoprofile > 0:
+  invhessian,hessianp,invhessianp = invhessnoprofile(hessian)
+else:
+  invhessian = tf.matrix_inverse(hessian)
+  hessianp = hessian
+  invhessianp = invhessian
+
+eigvals,eigvects = tf.self_adjoint_eig(hessianp)
 mineigv = tf.reduce_min(eigvals)
 UT = tf.transpose(eigvects)
 isposdef = mineigv > 0.
-invhessian = tf.matrix_inverse(hessian)
-gradcol = tf.reshape(grad,[-1,1])
-edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessian,transpose_a=True),gradcol)
+gradcol = tf.reshape(grad[:nprof],[-1,1])
+edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessianp,transpose_a=True),gradcol)
+
+mineigvinv = tf.reduce_min(tf.self_adjoint_eigvals(invhessian))
 
 invhessianouts = []
 jacouts = []
@@ -616,7 +649,10 @@ if options.doImpacts:
   if options.binByBinStat:
     gradNoBBB = tf.gradients(l,x,gate_gradients=True, stop_gradients=beta)[0]
     hessianNoBBB = jacobian(gradNoBBB,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False,stop_gradients=beta)
-    invhessianNoBBB = tf.matrix_inverse(hessianNoBBB)
+    if nsystnoprofile > 0:
+      invhessianNoBBB,_,_ = invhessnoprofile(hessianNoBBB)
+    else:
+      invhessianNoBBB = tf.matrix_inverse(hessianNoBBB)
   hessianStat = hessianNoBBB[:npoi,:npoi]
   invhessianStat = tf.matrix_inverse(hessianStat)
 
@@ -724,15 +760,25 @@ if options.saveHists:
 lb = np.concatenate((-np.inf*np.ones([npoi],dtype=dtype),-np.inf*np.ones([nsyst],dtype=dtype)),axis=0)
 ub = np.concatenate((np.inf*np.ones([npoi],dtype=dtype),np.inf*np.ones([nsyst],dtype=dtype)),axis=0)
 
+bounds = Bounds(lb,ub)
+
+##freeze non-profiled nuisance parameters in fit
+for iparm in range(nparms-nsystnoprofile,nparms):
+  bounds.lb[iparm] = 0.
+  bounds.ub[iparm] = 0.
+  
+boundscan = Bounds(np.copy(lb),np.copy(ub))
+
 xtol = np.finfo(dtype).eps
 edmtol = math.sqrt(xtol)
 btol = 1e-8
 
 if options.useSciPyMinimizer:
-  scipyminimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)}, options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
+  scipyminimizer = ScipyTROptimizerInterface(l, var_list = [x], bounds=bounds, options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
 else:
-  tfminimizer = SR1TrustExact(l,x,grad)
-  opinit = tfminimizer.initialize(l,x,grad)
+  #tfminimizer = SR1TrustExact(l,x,grad)
+  tfminimizer = SR1TrustExact()
+  opinit = tfminimizer.initialize(l,x,grad,nprof)
   opmin = tfminimizer.minimize(l,x,grad)
 
 outidxmap = {}
@@ -762,8 +808,8 @@ for scanvar in scanvars:
   errdir = tf.Variable(np.zeros(scanvar.shape,dtype=dtype),trainable=False)
   errproj = -tf.reduce_sum((scanvar-x0)*errdir,axis=0)
   dxconstraint = a + errproj
-  scanminimizer = ScipyTROptimizerInterface(l, var_list = [x], var_to_bounds={x: (lb,ub)},  equalities=[dxconstraint], options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
-  minosminimizer = ScipyTROptimizerInterface(errproj, var_list = [x], var_to_bounds={x: (lb,ub)},  equalities=[dlconstraint], options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
+  scanminimizer = ScipyTROptimizerInterface(l, var_list = [x], bounds=boundscan,  equalities=[dxconstraint], options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
+  minosminimizer = ScipyTROptimizerInterface(errproj, var_list = [x], bounds=bounds,  equalities=[dlconstraint], options={'verbose': options.fitverbose, 'maxiter' : 100000, 'gtol' : 0., 'xtol' : xtol, 'barrier_tol' : btol})
   scanminimizers.append(scanminimizer)
   minosminimizers.append(minosminimizer)
   x0s.append(x0)
@@ -1309,23 +1355,24 @@ for itoy in range(ntoys):
     #get inverse hessians for error calculation (can fail if matrix is not invertible)
     try:
       #invhessval,mineigval,isposdefval,edmval,invhessoutvals = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts])
-      invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT])
+      invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval,mineigvalinv = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT,mineigvinv])
       errstatus = 0
     except:
       edmval = -99.
       isposdefval = False
       mineigval = -99.
+      mineigvalinv = -99.
       invhessoutvals = outvalss
       errstatus = 1
       evs = None
       UTval = None
       
-    if isposdefval and edmval > -edmtol:
+    if isposdefval and edmval > -edmtol and mineigvalinv > 0.:
       status = 0
     else:
       status = 1
     
-    print("status = %i, errstatus = %i, nllval = %f, nllvalfull = %f, edmval = %e, mineigval = %e" % (status,errstatus,nllval,nllvalfull,edmval,mineigval))  
+    print("status = %i, errstatus = %i, nllval = %f, nllvalfull = %f, edmval = %e, mineigval = %e, mineigvalinv = %e" % (status,errstatus,nllval,nllvalfull,edmval,mineigval,mineigvalinv))  
     
     edmtolretry = 1e-3
     if isposdefval and edmval < edmtolretry and edmval>=0.:
@@ -1583,6 +1630,8 @@ for itoy in range(ntoys):
   
   for var in options.scan:
     print("running profile likelihood scan for %s" % var)
+    boundscan.lb[...] = bounds.lb[...]
+    boundscan.ub[...] = bounds.ub[...]
     if var in systs:
       erroutidx = systs.tolist().index(var)
       erridx = npoi + erroutidx
@@ -1590,6 +1639,10 @@ for itoy in range(ntoys):
       scanname = "x"
       outthetaval = xval
       outidx = 0
+      if var in systsnoprofile:
+        #need to remove fixing of parameter to avoid conflicting constraints
+        boundscan.lb[erridx] = -np.inf
+        boundscan.ub[erridx] = np.inf
     else:
       if not var in outidxmap:
         raise Exception("poi %s not found" % var)
