@@ -690,8 +690,9 @@ if options.doImpacts:
 
     #bin by bin template statistical uncertainties
     if options.binByBinStat:
-      invhessianoutNoBBB = tf.matmul(jacoutNoBBB,tf.matmul(invhessianNoBBB,jacoutNoBBB,transpose_b=True))      
-      impactBBB = tf.sqrt(tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:nout])
+      invhessianoutNoBBB = tf.matmul(jacoutNoBBB,tf.matmul(invhessianNoBBB,jacoutNoBBB,transpose_b=True))
+      impactBBBsq = tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:nout]
+      impactBBB = tf.sqrt(tf.maximum(tf.zeros_like(impactBBBsq),impactBBBsq))
       nuisancegroupimpactlist.append(impactBBB)
     
     nuisancegroupimpactout = tf.stack(nuisancegroupimpactlist,axis=1)
