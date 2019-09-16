@@ -40,7 +40,10 @@ from HiggsAnalysis.CombinedLimit.tfscipyhess import ScipyTROptimizerInterface,ja
 
 from scipy.optimize import SR1, Bounds
 from scipy.optimize import minimize as scipyminimize
-import matplotlib.pyplot as plt
+
+doplotting=False
+if doplotting:
+  import matplotlib.pyplot as plt
 
 parser = OptionParser(usage="usage: %prog [options] datacard.txt -o output \nrun with --help to get list of options")
 parser.add_option("-o","--output", default=None, type="string", help="output file name")
@@ -1358,7 +1361,7 @@ for itoy in range(ntoys):
     #get inverse hessians for error calculation (can fail if matrix is not invertible)
     try:
       #invhessval,mineigval,isposdefval,edmval,invhessoutvals = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts])
-      invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval,mineigvalinv = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT,mineigvinv])
+      hessval,invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval,mineigvalinv = sess.run([hessian,invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT,mineigvinv])
       errstatus = 0
     except:
       edmval = -99.
@@ -1405,6 +1408,14 @@ for itoy in range(ntoys):
   #list of hists to prevent garbage collection
   hists = []
 
+  if not options.toys > 1:
+    if doh5output and errstatus==0:
+      hhess = h5fout.create_dataset("hess", hessval.shape, dtype=hessval.dtype, compression="gzip")
+      hhess[...] = hessval
+      
+      hcov = h5fout.create_dataset("cov", invhessval.shape, dtype=invhessval.dtype, compression="gzip")
+      hcov[...] = invhessval
+
   for output, outputname, outvals,outvalsprefit,invhessoutval in zip(outputs, outputnames, outvalss,outvalssprefit,invhessoutvals):
     outname = ":".join(output.name.split(":")[:-1])
     outthetanames = outputname + systs.tolist()
@@ -1413,7 +1424,6 @@ for itoy in range(ntoys):
 
     if outname=="pmaskedexp":
       doSmoothnessTest = options.doSmoothnessTest
-      doplotting=False
       if doSmoothnessTest and errstatus==0:
         #set up smooth function test based on regularization groups
         rtlidxs = []
