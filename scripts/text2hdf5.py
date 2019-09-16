@@ -9,6 +9,7 @@ import h5py_cache
 from HiggsAnalysis.CombinedLimit.h5pyutils import writeFlatInChunks, writeSparse
 import math
 import gc
+from collections import OrderedDict
 
 
 # import ROOT with a fix to get batch mode (http://root.cern.ch/phpBB3/viewtopic.php?t=3198)
@@ -90,12 +91,21 @@ for proc in DC.processes:
     signals.append(proc)
       
 #list of systematic uncertainties (nuisances)
+systsd = OrderedDict()
 systs = []
+systsnoprofile = []
 if options.doSystematics:
   for syst in DC.systs:
-    systs.append(syst[0])
-  
-nsyst = len(systs)  
+    if not 'NoProfile' in syst[2]:
+      systsd[syst[0]] = syst
+      systs.append(syst[0])
+  for syst in DC.systs:
+    if 'NoProfile' in syst[2]:
+      systsd[syst[0]] = syst
+      systs.append(syst[0])
+      systsnoprofile.append(syst[0])
+
+nsyst = len(systs)
   
 #list of groups of systematics (nuisances) and lists of indexes
 systgroups = []
@@ -331,11 +341,10 @@ for chan in chans:
       
     norm_chan_scaled = None
     
-    for isyst,syst in enumerate(DC.systs[:nsyst]):
-      name = syst[0]
+    for isyst,(name,syst) in enumerate(systsd.items()):
       stype = syst[2]
         
-      if stype=='lnN':
+      if stype in ['lnN','lnNNoProfile']:
         ksyst = syst[4][chan][proc]
         if type(ksyst) is list:
           ksystup = ksyst[1]
@@ -519,6 +528,9 @@ hsignals[...] = signals
 
 hsysts = f.create_dataset("hsysts", [len(systs)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsysts[...] = systs
+
+hsystsnoprofile = f.create_dataset("hsystsnoprofile", [len(systsnoprofile)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hsystsnoprofile[...] = systsnoprofile
 
 hsystgroups = f.create_dataset("hsystgroups", [len(systgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsystgroups[...] = systgroups

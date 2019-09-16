@@ -4,7 +4,12 @@ import math
 
 class SR1TrustExact:
     
-  def __init__(self, loss, var,grad, initialtrustradius = 1.):
+  def initialize(self, loss, var, grad, nprofile = -1, B = None,initialtrustradius = 1.):
+    if nprofile >= 0 and nprofile<var.shape[0]:
+      var = var[:nprofile]
+      grad = grad[:nprofile]
+      if B is not None:
+        B = B[:nprofile,:nprofile]
     
     self.trustradius = tf.Variable(initialtrustradius*tf.ones_like(loss),trainable=False)
     self.loss_old = tf.Variable(tf.zeros_like(loss), trainable=False)
@@ -19,8 +24,9 @@ class SR1TrustExact:
     self.e = tf.Variable(tf.ones_like(var),trainable=False)
     self.e0 = self.e[0]
     self.doscaling = tf.Variable(False)
+    self.nprofile = nprofile
     
-  def initialize(self, loss, var, grad, B = None):
+    
     alist = []
     alist.append(tf.assign(self.var_old,var))
     alist.append(tf.assign(self.grad_old,grad))
@@ -49,6 +55,13 @@ class SR1TrustExact:
     
     if grad is None:
       grad = tf.gradients(loss,var, gate_gradients=True)[0]
+    
+    varfull = var
+    dofreezing = self.nprofile >= 0 and self.nprofile<varfull.shape[0]
+      
+    if dofreezing:
+      var = var[:self.nprofile]
+      grad = grad[:self.nprofile]
     
     xtol = np.finfo(var.dtype.as_numpy_dtype).eps
     #xtol = 0.
@@ -633,6 +646,11 @@ class SR1TrustExact:
     loopout = tf.cond(doiter, lambda: build_sol(), lambda: [self.var_old+0., tf.zeros_like(loss),tf.constant(False),self.grad_old])
     var_out, predicted_reduction_out, atboundary_out, grad_out = loopout
     
+    var_outfull = var_out
+    if dofreezing:
+      var_outfull = tf.concat([var_out,varfull[self.nprofile:]],axis=0)
+      
+    
     #assign updated values to stored variables, taking care to define dependencies such that things are executed
     #in the correct order
     alist = []
@@ -654,7 +672,7 @@ class SR1TrustExact:
     clist.extend(loopout)
     clist.append(oldvarassign)
     with tf.control_dependencies(clist):
-      varassign = tf.assign(var, var_out)
+      varassign = tf.assign(varfull, var_outfull)
       
       alist.append(varassign)
       return [isconverged,tf.group(alist)]

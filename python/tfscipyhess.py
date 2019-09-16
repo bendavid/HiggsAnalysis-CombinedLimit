@@ -152,6 +152,7 @@ class ScipyTROptimizerInterface(ExternalOptimizerInterface):
     optimizer_kwargs = dict(optimizer_kwargs.items())
     method = optimizer_kwargs.pop('method', self._DEFAULT_METHOD)
     hess = optimizer_kwargs.pop('hess', SR1())
+    bounds = optimizer_kwargs.pop('bounds', None)
 
     constraints = []
     for func, grad_func, tensor in zip(equality_funcs, equality_grad_funcs,self._equalities):
@@ -171,7 +172,19 @@ class ScipyTROptimizerInterface(ExternalOptimizerInterface):
       for ival,(lbval,ubval) in enumerate(packed_bounds):
         lb[ival] = lbval
         ub[ival] = ubval
+        if lbval==ubval:
+          lb[ival] = initial_val[ival]
+          ub[ival] = initial_val[ival]
       isnull = np.all(np.equal(lb,-np.inf)) and np.all(np.equal(ub,np.inf))
+      if not isnull:
+        constraints.append(LinearConstraint(np.eye(initial_val.shape[0],dtype=initial_val.dtype),lb,ub,keep_feasible=True))
+    elif bounds != None:
+      lb = np.copy(bounds.lb)
+      ub = np.copy(bounds.ub)
+      isnull = np.all(np.equal(lb,-np.inf)) and np.all(np.equal(ub,np.inf))
+      fixed = np.equal(lb,ub)
+      lb = np.where(fixed,initial_val,lb)
+      ub = np.where(fixed,initial_val,ub)
       if not isnull:
         constraints.append(LinearConstraint(np.eye(initial_val.shape[0],dtype=initial_val.dtype),lb,ub,keep_feasible=True))
 
@@ -197,7 +210,6 @@ class ScipyTROptimizerInterface(ExternalOptimizerInterface):
             'automatically and cannot be injected manually'.format(kwarg))
 
     minimize_kwargs.update(optimizer_kwargs)
-
     
     result = scipy.optimize.minimize(*minimize_args, **minimize_kwargs)
 
