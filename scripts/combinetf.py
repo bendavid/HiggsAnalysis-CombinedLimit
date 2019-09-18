@@ -584,33 +584,42 @@ if nthreadshess<0:
   nthreadshess = multiprocessing.cpu_count()
 nthreadshess = min(nthreadshess,nparms)
 
-grad = tf.gradients(l,x,gate_gradients=True)[0]  
+grad = tf.gradients(l,x,gate_gradients=True)[0]
+gradp = grad
+
 hessian = jacobian(grad,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
 
-def invhessnoprofile(hess):
+def invhessnoprofile(hess,cil=None):
   #manipulate hessian to enforce prefit covariance structure (unit diagonal) for non-profiled nuisances
   nprof = nparms - nsystnoprofile
   
   #break up hessian into profiled part, and impact table for non-profiled nuisances
   hp = hess[:nprof,:nprof]
-  hi = hess[:nprof,nprof:]
-  
-  #compute corresponding blocks of covariance matrix and reassemble
-  eyep = tf.eye(nprof,dtype=dtype)
   invhp = tf.matrix_inverse(hp)
-  ci = -tf.matmul(invhp,hi)
-  cp = invhp + tf.matmul(ci,ci,transpose_b=True)
   cf = tf.eye(nsystnoprofile,dtype=dtype)
   
-  cu = tf.concat([cp,ci],axis=-1)
-  cl = tf.concat([tf.transpose(ci),cf],axis=-1)
+  #use precomputed impacts if provided, otherwise compute from hessian
+  if cil is None:
+    print("recomputing cil")
+    hi = hess[:nprof,nprof:]
+    cil = -tf.linalg.solve(hp,hi)
+  else:
+    print("reusing cil")
+  
+  #reassemble
+  cp = invhp + tf.matmul(cil,cil,transpose_b=True)
+  cu = tf.concat([cp,cil],axis=-1)
+  cl = tf.concat([tf.transpose(cil),cf],axis=-1)
   
   invhess = tf.concat([cu,cl],axis=0)
-  return invhess,hp,invhp
+  return invhess,hp,invhp,cil
   
 
 if nsystnoprofile > 0:
-  invhessian,hessianp,invhessianp = invhessnoprofile(hessian)
+  ciexp = tf.get_variable("ciexp",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
+  invhessian,hessianp,invhessianp,_ = invhessnoprofile(hessian,ciexp)
+  #to calculate expected ci
+  _,_,_,ci = invhessnoprofile(hessian)
 else:
   invhessian = tf.matrix_inverse(hessian)
   hessianp = hessian
@@ -653,7 +662,10 @@ if options.doImpacts:
     gradNoBBB = tf.gradients(l,x,gate_gradients=True, stop_gradients=beta)[0]
     hessianNoBBB = jacobian(gradNoBBB,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False,stop_gradients=beta)
     if nsystnoprofile > 0:
-      invhessianNoBBB,_,_ = invhessnoprofile(hessianNoBBB)
+      ciexpNoBBB = tf.get_variable("ciexpNoBBB",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
+      invhessianNoBBB,_,_,_ = invhessnoprofile(hessianNoBBB,ciexpNoBBB)
+      #to calculate expected ci
+      _,_,_,ciNoBBB = invhessnoprofile(hessianNoBBB)
     else:
       invhessianNoBBB = tf.matrix_inverse(hessianNoBBB)
   hessianStat = hessianNoBBB[:npoi,:npoi]
@@ -1253,8 +1265,18 @@ def fillHists(tag, witherrors=options.computeHistErrors):
   
   return hists
 
+#TODO: Reconcile this with prefit to data, which probably requires profiling of non-profiled nuisances to end up at a consistent global minimum
+if nsystnoprofile>0.:
+  print("precomputing expected uncertainties for non-profiled nuisances parameters (requires one full covariance matrix calculation, so may take a while)")
+  sess.run(asimovassign)
+  if options.doImpacts and options.binByBinStat:
+    ciexpv,ciexpNoBBBv = sess.run([ci,ciNoBBB])
+  else:
+    ciexpv = sess.run(ci)
+  
 #prefit to data if needed
 if options.toys>0 and options.toysFrequentist and not options.bypassFrequentistFit:  
+  sess.run(dataobsassign)
   sess.run(nexpnomassign)
   minimize()
   xv = sess.run(x)
@@ -1265,6 +1287,13 @@ for itoy in range(ntoys):
   #reset all variables
   sess.run(globalinit)
   x.load(xv,sess)
+  
+  #reset cached impact tables for expected uncertainties of non-profiled nuisances
+  #TODO, avoid caching as numpy array and simply avoid resetting the variables, since the current approach needlessly duplicates memory, and the impact tables could in principle be large
+  if nsystnoprofile>0:
+    ciexp.load(ciexpv,sess)
+    if options.doImpacts and options.binByBinStat:
+      ciexpNoBBB.load(ciexpNoBBBv,sess)
     
   dofit = True
   
