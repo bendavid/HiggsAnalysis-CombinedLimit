@@ -1008,7 +1008,8 @@ doh5output = options.doh5Output
 
 if doh5output:
   #initialize h5py output
-  h5fout = h5py_cache.File('fitresults_%i.hdf5' % seed, chunk_cache_mem_size=cacheSize, mode='w')
+  postfix = options.postfix if options.postfix else ''
+  h5fout = h5py_cache.File('fitresults_%i_%s.hdf5' % (seed,postfix), chunk_cache_mem_size=cacheSize, mode='w')
 
   #copy some info to output file
   f.copy('hreggroups',h5fout)
