@@ -44,6 +44,7 @@ parser.add_option("","--chunkSize", type=int, default=4*1024**2, help="chunk siz
 parser.add_option("", "--sparse", default=False, action='store_true',  help="Store normalization and systematics arrays as sparse tensors")
 parser.add_option("", "--scaleMaskedYields", type=float, default=1.,  help="Scaling factor for yields in masked channels")
 parser.add_option("", "--postfix", default="",type="string", help="add _<postfix> to output hdf5 file")
+parser.add_option("", "--clipSystVariations", type=float, default=-1.,  help="Clipping of syst variations")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -278,7 +279,7 @@ for chan in chans:
     norm_chan = hist2array(norm_chan_hist, include_overflow=False).astype(dtype)
     if not chan in options.maskedChan:
       if (norm_chan_hist.GetSumw2().GetSize()>0):
-        print("proper uncertainties")
+        #print("proper uncertainties")
         sumw2_chan_hist = norm_chan_hist.Clone()
         if sumw2_chan_hist.InheritsFrom('TH1F'):
             #work around for the fact GetSumw2 returns a TArrayD but TH1F expects a Float_t *
@@ -291,7 +292,7 @@ for chan in chans:
         sumw2_chan = hist2array(sumw2_chan_hist, include_overflow=False).astype(dtype)
         sumw2_chan_hist.Delete()
       else:
-        print("fallback uncertainties")
+        print("Warning: Sumw2 not filled for histograms, using fallback method for computing uncertainties, binByBin uncertainties for templates may not be reliable")
         nentries_chan = (norm_chan_hist.GetEntries()/norm_chan_hist.GetSumOfWeights())*norm_chan
         sumw2_chan = nentries_chan*np.square(norm_chan/nentries_chan)
         nentries_chan = None
@@ -389,6 +390,37 @@ for chan in chans:
         logkdown_chan = -kfac*np.log(systdown_chan/norm_chan)
         logkdown_chan = np.where(np.equal(np.sign(norm_chan*systdown_chan),1), logkdown_chan, -logkepsilon*np.ones_like(logkdown_chan))
         systdown_chan = None
+        
+        if options.clipSystVariations>0.:
+          cliplow = -np.abs(np.log(options.clipSystVariations))
+          cliphigh = np.abs(np.log(options.clipSystVariations))
+          logkup_chan = np.clip(logkup_chan,cliplow,cliphigh)
+          logkdown_chan = np.clip(logkdown_chan,cliplow,cliphigh)
+        
+        
+        #checks for outliers, one-sided uncertainties, etc
+        
+        ##check for one-sided uncertainties
+        ##onesided = np.all(np.less_equal(np.sign(logkup_chan*logkdown_chan),0))
+        #onesided = np.any(np.less(np.sign(logkup_chan*logkdown_chan),0)) and 'Mu' not in name and 'mu' not in name
+        ##print("%s,%s,%s" % (chan,proc,name))
+        ##print(np.sign(logkup_chan*logkdown_chan))
+        ##if onesided:
+          ##print("Warning: One-sided uncertainty present for %s,%s,%s" % (chan,proc,name))
+          ##print(np.sign(logkup_chan*logkdown_chan))
+          ##print(norm_chan)
+          ##print(norm_chan*np.less(np.sign(logkup_chan*logkdown_chan),0))
+          ##print(logkup_chan)
+          ##print(logkdown_chan)
+        
+        #populated = norm_chan/np.sum(norm_chan) > 1e-5
+        #outlierup = populated*(np.abs(logkup_chan)>0.5)
+        #outlierdown = populated*(np.abs(logkdown_chan)>0.5)
+        ###outlier = np.any(np.abs(logkup_chan)>0.5) or np.any(np.abs(logkdown_chan)>0.5)
+        #outlier = np.any(outlierup) or np.any(outlierdown)
+        #maxvar = max(np.max(populated*np.abs(logkup_chan)),np.max(populated*np.abs(logkup_chan)))
+        #if outlier:
+          #print("Warning: outlier with abs(lnk)=%f present for %s,%s,%s" % (maxvar,chan,proc,name))
         
         logkavg_chan = 0.5*(logkup_chan + logkdown_chan)
         logkhalfdiff_chan = 0.5*(logkup_chan - logkdown_chan)
