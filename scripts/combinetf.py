@@ -81,6 +81,7 @@ parser.add_option("","--regularizationTau", default=0.1, type=float, help="regul
 parser.add_option("","--doh5Output", default=False, action='store_true', help="store additional h5py output for offline analyis/debugging")
 parser.add_option("","--doSmoothnessTest", default=False, action='store_true', help="run statistical smoothness test on absolute cross sections based on polynomial fits to regularization groups")
 parser.add_option("","--smoothnessTestMaxOrder", default=4, type=int, help="maximum polynomial order for smoothness test")
+parser.add_option("","--useExpNonProfiledErrs", default=False, action='store_true', help="use expected uncertainties for non-profiled nuisances")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -616,10 +617,12 @@ def invhessnoprofile(hess,cil=None):
   
 
 if nsystnoprofile > 0:
-  ciexp = tf.get_variable("ciexp",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
+  ciexp = None
+  if options.useExpNonProfiledErrs:
+    ciexp = tf.get_variable("ciexp",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
+    #to calculate expected ci
+    _,_,_,ci = invhessnoprofile(hessian)
   invhessian,hessianp,invhessianp,_ = invhessnoprofile(hessian,ciexp)
-  #to calculate expected ci
-  _,_,_,ci = invhessnoprofile(hessian)
 else:
   invhessian = tf.matrix_inverse(hessian)
   hessianp = hessian
@@ -662,10 +665,13 @@ if options.doImpacts:
     gradNoBBB = tf.gradients(l,x,gate_gradients=True, stop_gradients=beta)[0]
     hessianNoBBB = jacobian(gradNoBBB,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False,stop_gradients=beta)
     if nsystnoprofile > 0:
-      ciexpNoBBB = tf.get_variable("ciexpNoBBB",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
+      ciexpNoBBB = None
+      if options.useExpNonProfiledErrs:
+        ciexpNoBBB = tf.get_variable("ciexpNoBBB",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
+        #to calculate expected ci
+        _,_,_,ciNoBBB = invhessnoprofile(hessianNoBBB)
       invhessianNoBBB,_,_,_ = invhessnoprofile(hessianNoBBB,ciexpNoBBB)
-      #to calculate expected ci
-      _,_,_,ciNoBBB = invhessnoprofile(hessianNoBBB)
+
     else:
       invhessianNoBBB = tf.matrix_inverse(hessianNoBBB)
   hessianStat = hessianNoBBB[:npoi,:npoi]
@@ -1008,7 +1014,8 @@ doh5output = options.doh5Output
 
 if doh5output:
   #initialize h5py output
-  h5fout = h5py_cache.File('fitresults_%i.hdf5' % seed, chunk_cache_mem_size=cacheSize, mode='w')
+  postfix = options.postfix if options.postfix else ''
+  h5fout = h5py_cache.File('fitresults_%i_%s.hdf5' % (seed,postfix), chunk_cache_mem_size=cacheSize, mode='w')
 
   #copy some info to output file
   f.copy('hreggroups',h5fout)
@@ -1266,7 +1273,7 @@ def fillHists(tag, witherrors=options.computeHistErrors):
   return hists
 
 #TODO: Reconcile this with prefit to data, which probably requires profiling of non-profiled nuisances to end up at a consistent global minimum
-if nsystnoprofile>0.:
+if nsystnoprofile>0. and options.useExpNonProfiledErrs:
   print("precomputing expected uncertainties for non-profiled nuisances parameters (requires one full covariance matrix calculation, so may take a while)")
   sess.run(asimovassign)
   if options.doImpacts and options.binByBinStat:
@@ -1290,7 +1297,7 @@ for itoy in range(ntoys):
   
   #reset cached impact tables for expected uncertainties of non-profiled nuisances
   #TODO, avoid caching as numpy array and simply avoid resetting the variables, since the current approach needlessly duplicates memory, and the impact tables could in principle be large
-  if nsystnoprofile>0:
+  if nsystnoprofile>0 and options.useExpNonProfiledErrs:
     ciexp.load(ciexpv,sess)
     if options.doImpacts and options.binByBinStat:
       ciexpNoBBB.load(ciexpNoBBBv,sess)
