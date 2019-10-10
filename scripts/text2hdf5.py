@@ -44,7 +44,8 @@ parser.add_option("","--chunkSize", type=int, default=4*1024**2, help="chunk siz
 parser.add_option("", "--sparse", default=False, action='store_true',  help="Store normalization and systematics arrays as sparse tensors")
 parser.add_option("", "--scaleMaskedYields", type=float, default=1.,  help="Scaling factor for yields in masked channels")
 parser.add_option("", "--postfix", default="",type="string", help="add _<postfix> to output hdf5 file")
-parser.add_option("", "--clipSystVariations", type=float, default=-1.,  help="Clipping of syst variations")
+parser.add_option("", "--clipSystVariations", type=float, default=-1.,  help="Clipping of syst variations (all processes)")
+parser.add_option("", "--clipSystVariationsSignal", type=float, default=-1.,  help="Clipping of syst variations (signal processes)")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -394,6 +395,12 @@ for chan in chans:
         if options.clipSystVariations>0.:
           cliplow = -np.abs(np.log(options.clipSystVariations))
           cliphigh = np.abs(np.log(options.clipSystVariations))
+          logkup_chan = np.clip(logkup_chan,cliplow,cliphigh)
+          logkdown_chan = np.clip(logkdown_chan,cliplow,cliphigh)
+          
+        if options.clipSystVariationsSignal>0. and proc in signals:
+          cliplow = -np.abs(np.log(options.clipSystVariationsSignal))
+          cliphigh = np.abs(np.log(options.clipSystVariationsSignal))
           logkup_chan = np.clip(logkup_chan,cliplow,cliphigh)
           logkdown_chan = np.clip(logkdown_chan,cliplow,cliphigh)
         

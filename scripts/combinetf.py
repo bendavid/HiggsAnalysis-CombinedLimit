@@ -1015,7 +1015,7 @@ doh5output = options.doh5Output
 if doh5output:
   #initialize h5py output
   postfix = options.postfix if options.postfix else ''
-  h5fout = h5py_cache.File('fitresults_%i_%s.hdf5' % (seed,postfix), chunk_cache_mem_size=cacheSize, mode='w')
+  h5fout = h5py_cache.File(outdir +'fitresults_%i_%s.hdf5' % (seed,postfix), chunk_cache_mem_size=cacheSize, mode='w')
 
   #copy some info to output file
   f.copy('hreggroups',h5fout)
@@ -1030,6 +1030,10 @@ if doh5output:
 
   houtnames = h5fout.create_dataset("outnames", [len(outnames)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
   houtnames[...] = outnames
+  
+  hparms = h5fout.create_dataset("parms", [len(parms)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+  hparms[...] = parms
+  
 
 #smoothness test
 def dosmoothnessfit(n=0,lregouts=None,flatregcov=None,lidxs=None,outcov=None,doplotting=False):
@@ -1446,6 +1450,9 @@ for itoy in range(ntoys):
 
   if not options.toys > 1:
     if doh5output and errstatus==0:
+      hx = h5fout.create_dataset("x", xval.shape, dtype=xval.dtype, compression="gzip")
+      hx[...] = xval
+        
       hhess = h5fout.create_dataset("hess", hessval.shape, dtype=hessval.dtype, compression="gzip")
       hhess[...] = hessval
       
