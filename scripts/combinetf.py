@@ -117,9 +117,12 @@ chargemetagroups = f['hchargemetagroups'][...]
 chargemetagroupidxs = f['hchargemetagroupidxs'][...]
 reggroups = f['hreggroups'][...]
 reggroupidxs = f['hreggroupidxs'][...]
+noigroups = f['hnoigroups'][...]
+noigroupidxs = f['hnoigroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
 
 #load arrays from file
+hconstraintweights = f['hconstraintweights']
 hdata_obs = f['hdata_obs']
 sparse = not 'hnorm' in f
 
@@ -146,6 +149,7 @@ npolgroups = len(polgroups)
 nsumgroups = len(sumgroups)
 nchargemetagroups = len(chargemetagroups)
 nreggroups = len(reggroups)
+nnoigroups = len(noigroups)
 
 systgroupsfull = systgroups.tolist()
 systgroupsfull.append("stat")
@@ -158,6 +162,7 @@ nsystgroupsfull = len(systgroupsfull)
 #start by creating tensors which read in the hdf5 arrays (optimized for memory consumption)
 #note that this does NOT trigger the actual reading from disk, since this only happens when the
 #returned tensors are evaluated for the first time inside the graph
+constraintweights = maketensor(hconstraintweights)
 data_obs = maketensor(hdata_obs)
 if options.binByBinStat:
   hkstat = f['hkstat']
@@ -399,7 +404,7 @@ lnfull = tf.reduce_sum(-nobs*lognexp + nexp, axis=-1)
 ln = tf.reduce_sum(-nobs*(lognexp-lognexpnom) + nexp-nexpnom, axis=-1)
 
 #constraints
-lc = tf.reduce_sum(0.5*tf.square(theta - theta0))
+lc = tf.reduce_sum(constraintweights*0.5*tf.square(theta - theta0))
 
 l = ln + lc
 lfull = lnfull + lc
@@ -579,6 +584,16 @@ if options.POIMode == "mu":
     lregs *= taureg
     l += lregs
     lfull += lregs
+    
+  if nnoigroups > 0:
+    nois = tf.gather(theta, noigroupidxs)
+    nois = tf.identity(nois,"nois")
+    outputs.append(nois)
+    
+    outputname  = []
+    for idx in noigroupidxs:
+      outputname.append("%s_noi" % systs[idx])
+    outputnames.append(outputname)
 
 nthreadshess = options.nThreads
 if nthreadshess<0:

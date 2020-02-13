@@ -357,7 +357,25 @@ def parseCard(file, options):
                 else:
                     raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.regGroups[groupName],groupProcs)
 
-                continue  
+                continue
+            elif pdf=="noiGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupNuisances = numbers
+
+                if not groupNuisances:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupNuisances.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for noiGroup '%s': first thing after 'noiGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if groupName not in ret.noiGroups:
+                    ret.noiGroups[groupName] = list(groupNuisances)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.regGroups[groupName],groupNuisances)
+
+                continue 
 	    elif pdf=="autoMCStats":
 	        if len(f)>5: raise RuntimeError, "Syntax for autoMCStats should be 'channel autoMCStats threshold [include-signal = 0] [hist-mode = 0]"
 	        statThreshold = float(f[2])
