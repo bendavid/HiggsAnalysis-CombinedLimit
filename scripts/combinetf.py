@@ -115,6 +115,8 @@ sumgroupsegmentids = f['hsumgroupsegmentids'][...]
 sumgroupidxs = f['hsumgroupidxs'][...]
 chargemetagroups = f['hchargemetagroups'][...]
 chargemetagroupidxs = f['hchargemetagroupidxs'][...]
+ratiometagroups = f['hratiometagroups'][...]
+ratiometagroupidxs = f['hratiometagroupidxs'][...]
 reggroups = f['hreggroups'][...]
 reggroupidxs = f['hreggroupidxs'][...]
 noigroups = f['hnoigroups'][...]
@@ -148,6 +150,7 @@ nchargegroups = len(chargegroups)
 npolgroups = len(polgroups)
 nsumgroups = len(sumgroups)
 nchargemetagroups = len(chargemetagroups)
+nratiometagroups = len(ratiometagroups)
 nreggroups = len(reggroups)
 nnoigroups = len(noigroups)
 
@@ -553,6 +556,29 @@ if options.POIMode == "mu":
         outputname.append("%s_chargemetatotalxsec" % group)
       for group in chargemetagroups:
         outputname.append("%s_chargemetaasym" % group)
+      
+      outputnames.append(outputname)
+      
+    if nratiometagroups > 0:
+      #build matrix of cross sections
+      ratiometagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(ratiometagroupidxs,[-1])),ratiometagroupidxs.shape)
+          
+      #total xsec = sigma_num + sigma_den
+      #ratiometa ratio = sigma_num/sigma_den
+      mratiometacoeffs = tf.constant([[1.,1.],[1.,0.],[0.,1.]],dtype=dtype)
+      mratiometasums = tf.matmul(ratiometagroupxsecs,mratiometacoeffs,transpose_b=True)
+      ratiometatotals = mratiometasums[:,0]
+      ratiometaratios = mratiometasums[:,1]/mratiometasums[:,2]
+      
+      ratiometapois = tf.concat([ratiometatotals,ratiometaratios],axis=0)
+      ratiometapois = tf.identity(ratiometapois,"ratiometapois")
+      outputs.append(ratiometapois)
+      
+      outputname = []
+      for group in ratiometagroups:
+        outputname.append("%s_ratiometatotalxsec" % group)
+      for group in ratiometagroups:
+        outputname.append("%s_ratiometaratio" % group)
       
       outputnames.append(outputname)
 

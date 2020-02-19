@@ -340,6 +340,27 @@ def parseCard(file, options):
                     raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.chargeMetaGroups[groupName],groupProcs)
 
                 continue
+            elif pdf=="ratioMetaGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupProcs = numbers
+
+                if not groupProcs:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupProcs.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for ratioMetaGroup '%s': first thing after 'ratioMetaGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if len(groupProcs) != 2:
+                    raise RuntimeError, "Error for ratioMetaGroup '%s': group has %d elements, but expected to have 2." % len(groupProcs)
+
+                if groupName not in ret.ratioMetaGroups:
+                    ret.ratioMetaGroups[groupName] = list(groupProcs)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.ratioMetaGroups[groupName],groupProcs)
+
+                continue
             elif pdf=="regGroup":
                 # This is not really a pdf type, but a way to be able to group processes together
                 groupName = lsyst

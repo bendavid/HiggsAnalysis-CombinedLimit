@@ -166,6 +166,16 @@ for group in DC.chargeMetaGroups:
   for proc in DC.chargeMetaGroups[group]:
     chargemetagroupidx.append(sumgroups.index(proc))
   chargemetagroupidxs.append(chargemetagroupidx)
+  
+#list of groups of signal processes by ratiometa
+ratiometagroups = []
+ratiometagroupidxs = []
+for group in DC.ratioMetaGroups:
+  ratiometagroups.append(group)
+  ratiometagroupidx = []
+  for proc in DC.ratioMetaGroups[group]:
+    ratiometagroupidx.append(sumgroups.index(proc))
+  ratiometagroupidxs.append(ratiometagroupidx)
     
 #list of groups of signal processes for regularization
 reggroups = []
@@ -618,6 +628,12 @@ hchargemetagroups[...] = chargemetagroups
 
 hchargemetagroupidxs = f.create_dataset("hchargemetagroupidxs", [len(chargemetagroups),2], dtype='int32', compression="gzip")
 hchargemetagroupidxs[...] = chargemetagroupidxs
+
+hratiometagroups = f.create_dataset("hratiometagroups", [len(ratiometagroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hratiometagroups[...] = ratiometagroups
+
+hratiometagroupidxs = f.create_dataset("hratiometagroupidxs", [len(ratiometagroups),2], dtype='int32', compression="gzip")
+hratiometagroupidxs[...] = ratiometagroupidxs
 
 hreggroups = f.create_dataset("hreggroups", [len(reggroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hreggroups[...] = reggroups
