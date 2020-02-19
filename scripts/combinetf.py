@@ -115,11 +115,16 @@ sumgroupsegmentids = f['hsumgroupsegmentids'][...]
 sumgroupidxs = f['hsumgroupidxs'][...]
 chargemetagroups = f['hchargemetagroups'][...]
 chargemetagroupidxs = f['hchargemetagroupidxs'][...]
+ratiometagroups = f['hratiometagroups'][...]
+ratiometagroupidxs = f['hratiometagroupidxs'][...]
 reggroups = f['hreggroups'][...]
 reggroupidxs = f['hreggroupidxs'][...]
+noigroups = f['hnoigroups'][...]
+noigroupidxs = f['hnoigroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
 
 #load arrays from file
+hconstraintweights = f['hconstraintweights']
 hdata_obs = f['hdata_obs']
 sparse = not 'hnorm' in f
 
@@ -145,7 +150,9 @@ nchargegroups = len(chargegroups)
 npolgroups = len(polgroups)
 nsumgroups = len(sumgroups)
 nchargemetagroups = len(chargemetagroups)
+nratiometagroups = len(ratiometagroups)
 nreggroups = len(reggroups)
+nnoigroups = len(noigroups)
 
 systgroupsfull = systgroups.tolist()
 systgroupsfull.append("stat")
@@ -158,6 +165,7 @@ nsystgroupsfull = len(systgroupsfull)
 #start by creating tensors which read in the hdf5 arrays (optimized for memory consumption)
 #note that this does NOT trigger the actual reading from disk, since this only happens when the
 #returned tensors are evaluated for the first time inside the graph
+constraintweights = maketensor(hconstraintweights)
 data_obs = maketensor(hdata_obs)
 if options.binByBinStat:
   hkstat = f['hkstat']
@@ -399,7 +407,7 @@ lnfull = tf.reduce_sum(-nobs*lognexp + nexp, axis=-1)
 ln = tf.reduce_sum(-nobs*(lognexp-lognexpnom) + nexp-nexpnom, axis=-1)
 
 #constraints
-lc = tf.reduce_sum(0.5*tf.square(theta - theta0))
+lc = tf.reduce_sum(constraintweights*0.5*tf.square(theta - theta0))
 
 l = ln + lc
 lfull = lnfull + lc
@@ -550,6 +558,29 @@ if options.POIMode == "mu":
         outputname.append("%s_chargemetaasym" % group)
       
       outputnames.append(outputname)
+      
+    if nratiometagroups > 0:
+      #build matrix of cross sections
+      ratiometagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(ratiometagroupidxs,[-1])),ratiometagroupidxs.shape)
+          
+      #total xsec = sigma_num + sigma_den
+      #ratiometa ratio = sigma_num/sigma_den
+      mratiometacoeffs = tf.constant([[1.,1.],[1.,0.],[0.,1.]],dtype=dtype)
+      mratiometasums = tf.matmul(ratiometagroupxsecs,mratiometacoeffs,transpose_b=True)
+      ratiometatotals = mratiometasums[:,0]
+      ratiometaratios = mratiometasums[:,1]/mratiometasums[:,2]
+      
+      ratiometapois = tf.concat([ratiometatotals,ratiometaratios],axis=0)
+      ratiometapois = tf.identity(ratiometapois,"ratiometapois")
+      outputs.append(ratiometapois)
+      
+      outputname = []
+      for group in ratiometagroups:
+        outputname.append("%s_ratiometatotalxsec" % group)
+      for group in ratiometagroups:
+        outputname.append("%s_ratiometaratio" % group)
+      
+      outputnames.append(outputname)
 
   #regularization
   if options.doRegularization and nreggroups > 0:
@@ -579,6 +610,16 @@ if options.POIMode == "mu":
     lregs *= taureg
     l += lregs
     lfull += lregs
+    
+  if nnoigroups > 0:
+    nois = tf.gather(theta, noigroupidxs)
+    nois = tf.identity(nois,"nois")
+    outputs.append(nois)
+    
+    outputname  = []
+    for idx in noigroupidxs:
+      outputname.append("%s_noi" % systs[idx])
+    outputnames.append(outputname)
 
 nthreadshess = options.nThreads
 if nthreadshess<0:
