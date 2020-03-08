@@ -610,16 +610,17 @@ if options.POIMode == "mu":
     lregs *= taureg
     l += lregs
     lfull += lregs
-    
-  if nnoigroups > 0:
-    nois = tf.gather(theta, noigroupidxs)
-    nois = tf.identity(nois,"nois")
-    outputs.append(nois)
-    
-    outputname  = []
-    for idx in noigroupidxs:
-      outputname.append("%s_noi" % systs[idx])
-    outputnames.append(outputname)
+
+# I put these line backward by 2 columns
+if nnoigroups > 0:
+  nois = tf.gather(theta, noigroupidxs)
+  nois = tf.identity(nois,"nois")
+  outputs.append(nois)
+
+  outputname  = []
+  for idx in noigroupidxs:
+    outputname.append("%s_noi" % systs[idx])
+  outputnames.append(outputname)
 
 nthreadshess = options.nThreads
 if nthreadshess<0:
@@ -1606,6 +1607,11 @@ for itoy in range(ntoys):
     for output, outputname, nuisanceimpactoutval, nuisancegroupimpactoutval in zip(outputs,outputnames,nuisanceimpactoutvals,nuisancegroupimpactoutvals):
       outname = ":".join(output.name.split(":")[:-1])
       nout = output.shape[0]
+      ###
+      #print ">>> output.name: %s" % output.name
+      #print ">>> nout: %d" % nout
+      if nout == 0: continue  # to avoid errors with --POImode None
+      ###
       nuisanceImpactHist = ROOT.TH2D('nuisance_impact_'+outname, 'per-nuisance impacts for '+dName+' in '+outname, int(nout), 0., 1., int(nsyst), 0., 1.)
       nuisanceGroupImpactHist = ROOT.TH2D('nuisance_group_impact_'+outname, 'per-nuisance-group impacts for '+dName+' in '+outname, int(nout), 0., 1., int(nsystgroupsfull), 0., 1.)
       
