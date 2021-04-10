@@ -1092,8 +1092,7 @@ bayesassign = tf.assign(x, tf.concat([xpoi,theta+tf.random_normal(shape=theta.sh
 if options.binByBinStat:
   bayesassignbeta = tf.assign(betagen, tf.random_gamma(shape=[],alpha=kstat+1.,beta=kstat,dtype=tf.as_dtype(dtype)))
 
-#initialize output tree
-# manage output folder                                                                                                                                                      
+# manage output folder                                                 
 outdir = ""
 if options.outputDir:
     outdir = options.outputDir
@@ -1104,8 +1103,10 @@ if options.outputDir:
             print "Creating folder", outdir
             os.system("mkdir -p " + outdir)
 
-fname = outdir + 'fitresults_%i.root' % seed
-if options.postfix: fname = fname.replace(".root","_{pf}.root".format(pf=options.postfix))
+#initialize output tree
+fname = outdir + (options.output if options.output else 'fitresults_%i.root' % seed)
+if options.postfix:
+  fname = fname.replace(".root","_{pf}.root".format(pf=options.postfix))
 fout = ROOT.TFile( fname , 'recreate' )
 tree = ROOT.TTree("fitresults", "fitresults")
 
@@ -1253,8 +1254,7 @@ doh5output = options.doh5Output
 
 if doh5output:
   #initialize h5py output
-  postfix = options.postfix if options.postfix else ''
-  h5fout = h5py.File(outdir + 'fitresults_%i_%s.hdf5' % (seed,postfix), rdcc_nbytes=cacheSize, mode='w')
+  h5fout = h5py.File(fname.replace(".root",".hdf5"), rdcc_nbytes=cacheSize, mode='w')
 
   #copy some info to output file
   f.copy('hreggroups',h5fout)
