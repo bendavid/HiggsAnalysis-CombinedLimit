@@ -5,7 +5,6 @@ from optparse import OptionParser
 
 import numpy as np
 import h5py
-import h5py_cache
 from HiggsAnalysis.CombinedLimit.h5pyutils import writeFlatInChunks, writeSparse
 import math
 import gc
@@ -53,15 +52,23 @@ if len(args) == 0:
     exit(1)
 
 options.fileName = args[0]
-if options.fileName.endswith(".gz"):
-    import gzip
-    file = gzip.open(options.fileName, "rb")
-    options.fileName = options.fileName[:-3]
-else:
-    file = open(options.fileName, "r")
 
-## Parse text file 
-DC = parseCard(file, options)
+
+if not options.fileName.endswith(".pkl"):
+    
+    if options.fileName.endswith(".gz"):
+        import gzip
+        file = gzip.open(options.fileName, "rb")
+        options.fileName = options.fileName[:-3]
+    else:
+        file = open(options.fileName, "r")
+    ## Parse text file 
+    DC = parseCard(file, options)
+
+else:
+    file = open(options.fileName, "rb")
+    import pickle
+    DC = pickle.load(file)
 
 if options.dumpCard:
     DC.print_structure()
@@ -146,7 +153,19 @@ for group in DC.polGroups:
   for proc in DC.polGroups[group]:
     polgroupidx.append(procs.index(proc))
   polgroupidxs.append(polgroupidx)
-  
+
+
+#list of groups of signal processes by helicity xsec
+helgroups = []
+helgroupidxs = []
+for group in DC.helGroups:
+  helgroups.append(group)
+  helgroupidx = []
+  for proc in DC.helGroups[group]:
+    helgroupidx.append(procs.index(proc))
+  helgroupidxs.append(helgroupidx)
+
+
 #list of groups of signal processes to be summed
 sumgroups = []
 sumgroupsegmentids = []
@@ -176,6 +195,20 @@ for group in DC.ratioMetaGroups:
   for proc in DC.ratioMetaGroups[group]:
     ratiometagroupidx.append(sumgroups.index(proc))
   ratiometagroupidxs.append(ratiometagroupidx)
+
+#list of groups of signal processes by helmeta
+helmetagroups = []
+helmetagroupidxs = []
+for group in DC.helMetaGroups:
+  print group, "group"
+  helmetagroups.append(group)
+  helmetagroupidx = []
+  for proc in DC.helMetaGroups[group]:
+    print proc, "in group"
+    helmetagroupidx.append(sumgroups.index(proc))
+  helmetagroupidxs.append(helmetagroupidx)
+
+print len(helmetagroupidxs)
     
 #list of groups of signal processes for regularization
 reggroups = []
@@ -186,6 +219,39 @@ for igroup,group in enumerate(DC.regGroups):
   for proc in DC.regGroups[group]:
     reggroupidx.append(procs.index(proc))
   reggroupidxs.append(reggroupidx)
+  
+poly1dreggroups = []
+poly1dreggroupfirstorder = []
+poly1dreggrouplastorder = []
+poly1dreggroupnames = []
+poly1dreggroupbincenters = []
+for group in DC.poly1DRegGroups:
+  poly1dreggroups.append(group)
+  poly1dreggroupfirstorder.append(DC.poly1DRegGroups[group]["firstorder"])
+  poly1dreggrouplastorder.append(DC.poly1DRegGroups[group]["lastorder"])
+  poly1dreggroupnames.append(DC.poly1DRegGroups[group]["names"])
+  poly1dreggroupbincenters.append(DC.poly1DRegGroups[group]["bincenters"])
+  
+poly2dreggroups = []
+poly2dreggroupfirstorder = []
+poly2dreggrouplastorder = []
+poly2dreggroupfullorder = []
+poly2dreggroupnames = []
+poly2dreggroupbincenters0 = []
+poly2dreggroupbincenters1 = []
+for group in DC.poly2DRegGroups:
+  poly2dreggroups.append(group)
+  poly2dreggroupfirstorder.append(DC.poly2DRegGroups[group]["firstorder"])
+  poly2dreggrouplastorder.append(DC.poly2DRegGroups[group]["lastorder"])
+  poly2dreggroupfullorder.append(DC.poly2DRegGroups[group]["fullorder"])
+  poly2dreggroupnames.append(DC.poly2DRegGroups[group]["names"])
+  bincenters0 = []
+  bincenters1 = []
+  for bincenter in DC.poly2DRegGroups[group]["bincenters"]:
+    bincenters0.append(bincenter[0])
+    bincenters1.append(bincenter[1])
+  poly2dreggroupbincenters0.append(bincenters0)
+  poly2dreggroupbincenters1.append(bincenters1)
   
 #list of groups of systematics to be treated as additional outputs for impacts, etc (aka "nuisances of interest")
 noigroups = []
@@ -217,9 +283,10 @@ for chan in chans:
   if chan in options.maskedChan:
     nbinschan = 1
   else:
+    #print chan, "looking at this channel"
     data_obs_chan_hist = MB.getShape(chan,"data_obs")
     #exclude overflow/underflow bins
-    nbinschan = data_obs_chan_hist.GetSize() - 2
+    nbinschan = data_obs_chan_hist.GetNbinsX()*data_obs_chan_hist.GetNbinsY() * data_obs_chan_hist.GetNbinsZ()
     nbins += nbinschan
   
   nbinsfull += nbinschan
@@ -283,7 +350,7 @@ for chan in chans:
   if not chan in options.maskedChan:
     #get histogram, convert to np array with desired type, and exclude underflow/overflow bins
     data_obs_chan_hist = MB.getShape(chan,"data_obs")
-    data_obs_chan = hist2array(data_obs_chan_hist, include_overflow=False).astype(dtype)
+    data_obs_chan = hist2array(data_obs_chan_hist, include_overflow=False).ravel().astype(dtype)
     data_obs_chan_hist.Delete()
     nbinschan = data_obs_chan.shape[0]
     #write to output array
@@ -302,7 +369,7 @@ for chan in chans:
     
     #get histogram, convert to np array with desired type, and exclude underflow/overflow bins
     norm_chan_hist = MB.getShape(chan,proc)
-    norm_chan = hist2array(norm_chan_hist, include_overflow=False).astype(dtype)
+    norm_chan = hist2array(norm_chan_hist, include_overflow=False).ravel().astype(dtype)
     if not chan in options.maskedChan:
       if (norm_chan_hist.GetSumw2().GetSize()>0):
         #print("proper uncertainties")
@@ -315,10 +382,12 @@ for chan in chans:
             sumw2_chan_hist.Set(sumw2_chan_hist.GetSumw2().GetSize(), sumw2f)
         else:
             sumw2_chan_hist.Set(sumw2_chan_hist.GetSumw2().GetSize(), sumw2_chan_hist.GetSumw2().GetArray())
-        sumw2_chan = hist2array(sumw2_chan_hist, include_overflow=False).astype(dtype)
+        sumw2_chan = hist2array(sumw2_chan_hist, include_overflow=False).ravel().astype(dtype)
         sumw2_chan_hist.Delete()
       else:
         print("Warning: Sumw2 not filled for histograms, using fallback method for computing uncertainties, binByBin uncertainties for templates may not be reliable")
+        print(proc, "is problematic")
+        print(norm_chan_hist.GetSumw2().GetSize())
         nentries_chan = (norm_chan_hist.GetEntries()/norm_chan_hist.GetSumOfWeights())*norm_chan
         sumw2_chan = nentries_chan*np.square(norm_chan/nentries_chan)
         nentries_chan = None
@@ -400,7 +469,7 @@ for chan in chans:
           continue
         
         systup_chan_hist = MB.getShape(chan,proc,name+"Up")
-        systup_chan = hist2array(systup_chan_hist, include_overflow=False).astype(dtype)
+        systup_chan = hist2array(systup_chan_hist, include_overflow=False).ravel().astype(dtype)
         systup_chan_hist.Delete()
         if systup_chan.shape[0] != nbinschan:
           raise Exception("Mismatch between number of bins in channel for data and systematic variation template")
@@ -409,7 +478,7 @@ for chan in chans:
         systup_chan = None
         
         systdown_chan_hist = MB.getShape(chan,proc,name+"Down")
-        systdown_chan = hist2array(systdown_chan_hist, include_overflow=False).astype(dtype)
+        systdown_chan = hist2array(systdown_chan_hist, include_overflow=False).ravel().astype(dtype)
         systdown_chan_hist.Delete()
         if systdown_chan.shape[0] != nbinschan:
           raise Exception("Mismatch between number of bins in channel for data and systematic variation template")
@@ -579,9 +648,9 @@ if chunkSize > options.chunkSize:
 outfilename = options.out.replace('.root','.hdf5')
 if options.sparse:
   outfilename = outfilename.replace('.hdf5','_sparse.hdf5')
-if options.postfix: 
+if options.postfix:
     outfilename = outfilename.replace('.hdf5','_{pf}.hdf5'.format(pf=options.postfix))
-f = h5py_cache.File(outfilename, chunk_cache_mem_size=chunkSize, mode='w')
+f = h5py.File(outfilename, rdcc_nbytes=chunkSize, mode='w')
 
 #save some lists of strings to the file for later use
 hprocs = f.create_dataset("hprocs", [len(procs)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
@@ -614,6 +683,12 @@ hpolgroups[...] = polgroups
 hpolgroupidxs = f.create_dataset("hpolgroupidxs", [len(polgroups),3], dtype='int32', compression="gzip")
 hpolgroupidxs[...] = polgroupidxs
 
+hhelgroups = f.create_dataset("hhelgroups", [len(helgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hhelgroups[...] = helgroups
+
+hhelgroupidxs = f.create_dataset("hhelgroupidxs", [len(helgroups),6], dtype='int32', compression="gzip")
+hhelgroupidxs[...] = helgroupidxs
+
 hsumgroups = f.create_dataset("hsumgroups", [len(sumgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsumgroups[...] = sumgroups
 
@@ -635,11 +710,53 @@ hratiometagroups[...] = ratiometagroups
 hratiometagroupidxs = f.create_dataset("hratiometagroupidxs", [len(ratiometagroups),2], dtype='int32', compression="gzip")
 hratiometagroupidxs[...] = ratiometagroupidxs
 
+hhelmetagroups = f.create_dataset("hhelmetagroups", [len(helmetagroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hhelmetagroups[...] = helmetagroups
+
+hhelmetagroupidxs = f.create_dataset("hhelmetagroupidxs", [len(helmetagroups),6], dtype='int32', compression="gzip")
+hhelmetagroupidxs[...] = helmetagroupidxs
+
 hreggroups = f.create_dataset("hreggroups", [len(reggroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hreggroups[...] = reggroups
 
 hreggroupidxs = f.create_dataset("hreggroupidxs", [len(reggroupidxs)], dtype=h5py.special_dtype(vlen=np.dtype('int32')), compression="gzip")
 hreggroupidxs[...] = reggroupidxs
+
+hpoly1dreggroups = f.create_dataset("hpoly1dreggroups", [len(poly1dreggroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hpoly1dreggroups[...] = poly1dreggroups
+
+hpoly1dreggroupfirstorder = f.create_dataset("hpoly1dreggroupfirstorder", [len(poly1dreggroupfirstorder)], dtype='int32', compression="gzip")
+hpoly1dreggroupfirstorder[...] = poly1dreggroupfirstorder
+
+hpoly1dreggrouplastorder = f.create_dataset("hpoly1dreggrouplastorder", [len(poly1dreggrouplastorder)], dtype='int32', compression="gzip")
+hpoly1dreggrouplastorder[...] = poly1dreggrouplastorder
+
+hpoly1dreggroupnames = f.create_dataset("hpoly1dreggroupnames", [len(poly1dreggroupnames)], dtype=h5py.special_dtype(vlen="S256"), compression="gzip")
+hpoly1dreggroupnames[...] = poly1dreggroupnames
+
+hpoly1dreggroupbincenters = f.create_dataset("hpoly1dreggroupbincenters", [len(poly1dreggroupbincenters)], dtype=h5py.special_dtype(vlen=np.dtype('float64')), compression="gzip")
+hpoly1dreggroupbincenters[...] = poly1dreggroupbincenters
+
+hpoly2dreggroups = f.create_dataset("hpoly2dreggroups", [len(poly2dreggroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hpoly2dreggroups[...] = poly2dreggroups
+
+hpoly2dreggroupfirstorder = f.create_dataset("hpoly2dreggroupfirstorder", [len(poly2dreggroupfirstorder),2], dtype='int32', compression="gzip")
+hpoly2dreggroupfirstorder[...] = poly2dreggroupfirstorder
+
+hpoly2dreggrouplastorder = f.create_dataset("hpoly2dreggrouplastorder", [len(poly2dreggrouplastorder),2], dtype='int32', compression="gzip")
+hpoly2dreggrouplastorder[...] = poly2dreggrouplastorder
+
+hpoly2dreggroupfullorder = f.create_dataset("hpoly2dreggroupfullorder", [len(poly2dreggroupfullorder),2], dtype='int32', compression="gzip")
+hpoly2dreggroupfullorder[...] = poly2dreggroupfullorder
+
+hpoly2dreggroupnames = f.create_dataset("hpoly2dreggroupnames", [len(poly2dreggroupnames)], dtype=h5py.special_dtype(vlen="S256"), compression="gzip")
+hpoly2dreggroupnames[...] = poly2dreggroupnames
+
+hpoly2dreggroupbincenters0 = f.create_dataset("hpoly2dreggroupbincenters0", [len(poly2dreggroupbincenters0)], dtype=h5py.special_dtype(vlen=np.dtype('float64')), compression="gzip")
+hpoly2dreggroupbincenters0[...] = poly2dreggroupbincenters0
+
+hpoly2dreggroupbincenters1 = f.create_dataset("hpoly2dreggroupbincenters1", [len(poly2dreggroupbincenters1)], dtype=h5py.special_dtype(vlen=np.dtype('float64')), compression="gzip")
+hpoly2dreggroupbincenters1[...] = poly2dreggroupbincenters1
 
 hnoigroups = f.create_dataset("hnoigroups", [len(noigroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hnoigroups[...] = noigroups

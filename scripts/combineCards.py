@@ -238,7 +238,6 @@ for ich,fname in enumerate(args):
         else:
             regGroups[groupName] = procNames
 
-
     # Finally report nuisance edits propagated to end of card
     for editline in DC.nuisanceEditLines:
       if len(editline)==2: nuisanceEdits.append("%s %s"%(editline[0]," ".join(editline[1])))
@@ -334,7 +333,6 @@ for ext in extArgs.iterkeys():
 for groupName,nuisanceNames in groups.iteritems():
     nuisances = ' '.join(nuisanceNames)
     print '%(groupName)s group = %(nuisances)s' % locals()
-
 for groupName,procNames in chargeGroups.iteritems():
     procs = ' '.join(procNames)
     print '%(groupName)s chargeGroup = %(procs)s' % locals()

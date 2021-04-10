@@ -301,6 +301,28 @@ def parseCard(file, options):
                     raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.polGroups[groupName],groupProcs)
 
                 continue
+
+            elif pdf=="helGroup":
+                # This is not really a pdf type, but a way to be able to group processes together
+                groupName = lsyst
+                groupProcs = numbers
+
+                if not groupProcs:
+                    raise RuntimeError, "Syntax error for group '%s': empty line after 'group'." % groupName
+
+                defTok = groupProcs.pop(0)
+                if defTok!='=':
+                    raise RuntimeError, "Syntax error for helGroup '%s': first thing after 'helGroup' is not '=' but '%s'." % (groupName,defTok)
+
+                if len(groupProcs) != 6:
+                    raise RuntimeError, "Error for helGroup '%s': group has %d elements, but expected to have 3." % len(groupProcs)
+
+                if groupName not in ret.helGroups:
+                    ret.helGroups[groupName] = list(groupProcs)
+                else:
+                    raise RuntimeError, "Will not redefine group '%s'. It previously contained '%s' and you now wanted it to contain '%s'." % (groupName,ret.helGroups[groupName],groupProcs)
+
+                continue
             elif pdf=="sumGroup":
                 # This is not really a pdf type, but a way to be able to group processes together
                 groupName = lsyst

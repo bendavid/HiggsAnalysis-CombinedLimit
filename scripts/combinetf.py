@@ -16,7 +16,6 @@ from tensorflow.python.ops import sparse_ops
 
 import numpy as np
 import h5py
-import h5py_cache
 from HiggsAnalysis.CombinedLimit.tfh5pyutils import maketensor,makesparsetensor
 from HiggsAnalysis.CombinedLimit.tfsparseutils import simple_sparse_tensor_dense_matmul, simple_sparse_slice0begin, simple_sparse_to_dense, SimpleSparseTensor, makeCache
 from HiggsAnalysis.CombinedLimit.lsr1trustobs import SR1TrustExact
@@ -82,6 +81,7 @@ parser.add_option("","--doh5Output", default=False, action='store_true', help="s
 parser.add_option("","--doSmoothnessTest", default=False, action='store_true', help="run statistical smoothness test on absolute cross sections based on polynomial fits to regularization groups")
 parser.add_option("","--smoothnessTestMaxOrder", default=4, type=int, help="maximum polynomial order for smoothness test")
 parser.add_option("","--useExpNonProfiledErrs", default=False, action='store_true', help="use expected uncertainties for non-profiled nuisances")
+parser.add_option("","--yieldProtectionCutoff", default=-1., type=float, help="cutoff used to protect total yield from negative values.")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -97,7 +97,7 @@ options.fileName = args[0]
 
 cacheSize = 4*1024**2
 #TODO open file an extra time and enforce sufficient cache size for second file open
-f = h5py_cache.File(options.fileName, chunk_cache_mem_size=cacheSize, mode='r')
+f = h5py.File(options.fileName, rdcc_nbytes=cacheSize, mode='r')
 
 #load text arrays from file
 procs = f['hprocs'][...]
@@ -110,6 +110,8 @@ chargegroups = f['hchargegroups'][...]
 chargegroupidxs = f['hchargegroupidxs'][...]
 polgroups = f['hpolgroups'][...]
 polgroupidxs = f['hpolgroupidxs'][...]
+helgroups = f['hhelgroups'][...]
+helgroupidxs = f['hhelgroupidxs'][...]
 sumgroups = f['hsumgroups'][...]
 sumgroupsegmentids = f['hsumgroupsegmentids'][...]
 sumgroupidxs = f['hsumgroupidxs'][...]
@@ -117,8 +119,22 @@ chargemetagroups = f['hchargemetagroups'][...]
 chargemetagroupidxs = f['hchargemetagroupidxs'][...]
 ratiometagroups = f['hratiometagroups'][...]
 ratiometagroupidxs = f['hratiometagroupidxs'][...]
+helmetagroups = f['hhelmetagroups'][...]
+helmetagroupidxs = f['hhelmetagroupidxs'][...]
 reggroups = f['hreggroups'][...]
 reggroupidxs = f['hreggroupidxs'][...]
+poly1dreggroups = f['hpoly1dreggroups'][...]
+poly1dreggroupfirstorder = f['hpoly1dreggroupfirstorder'][...]
+poly1dreggrouplastorder = f['hpoly1dreggrouplastorder'][...]
+poly1dreggroupnames = f['hpoly1dreggroupnames'][...]
+poly1dreggroupbincenters = f['hpoly1dreggroupbincenters'][...]
+poly2dreggroups = f['hpoly2dreggroups'][...]
+poly2dreggroupfirstorder = f['hpoly2dreggroupfirstorder'][...]
+poly2dreggrouplastorder = f['hpoly2dreggrouplastorder'][...]
+poly2dreggroupfullorder = f['hpoly2dreggroupfullorder'][...]
+poly2dreggroupnames = f['hpoly2dreggroupnames'][...]
+poly2dreggroupbincenters0 = f['hpoly2dreggroupbincenters0'][...]
+poly2dreggroupbincenters1 = f['hpoly2dreggroupbincenters1'][...]
 noigroups = f['hnoigroups'][...]
 noigroupidxs = f['hnoigroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
@@ -148,11 +164,18 @@ nsignals = len(signals)
 nsystgroups = len(systgroups)
 nchargegroups = len(chargegroups)
 npolgroups = len(polgroups)
+nhelgroups = len(helgroups)
 nsumgroups = len(sumgroups)
 nchargemetagroups = len(chargemetagroups)
 nratiometagroups = len(ratiometagroups)
+nhelmetagroups = len(helmetagroups)
 nreggroups = len(reggroups)
+npoly1dreggroups = len(poly1dreggroups)
+npoly2dreggroups = len(poly2dreggroups)
 nnoigroups = len(noigroups)
+
+
+
 
 systgroupsfull = systgroups.tolist()
 systgroupsfull.append("stat")
@@ -315,6 +338,11 @@ maskedexp = nexpfullcentral[nbins:]
 
 nexpcentral = nexpfullcentral[:nbins]
 
+# protection for negative yields
+yp = options.yieldProtectionCutoff
+if yp > 0.:
+  nexpcentral = tf.where(tf.greater_equal(nexpcentral, yp), nexpcentral, yp*tf.exp(nexpcentral/yp-1.))
+
 if options.binByBinStat:
   #beta = (nobs + kstat - 1.)/(nexpcentral+kstat)
   beta = (nobs + kstat)/(nexpcentral+kstat)
@@ -443,6 +471,8 @@ if options.POIMode == "mu":
 outputnames.append(outputname)
   
 taureg = -1.
+if options.doRegularization:
+  taureg = options.regularizationTau
   
 if options.POIMode == "mu":  
   if nbinsmasked>0:
@@ -507,6 +537,44 @@ if options.POIMode == "mu":
       outputname.append("%s_a0" % group)
     for group in polgroups:
       outputname.append("%s_a4" % group)
+      
+    outputnames.append(outputname)
+
+  #transformation from helicity xsecs to angular coefficients
+  if nhelgroups > 0:  
+    #build matrix of cross sections
+    helgroupxsecs = tf.reshape(tf.gather(pmaskedexp, tf.reshape(helgroupidxs,[-1])),helgroupidxs.shape)
+    
+    #factors["A0"]= 2.
+    #factors["A1"]=2.*math.sqrt(2)
+    #factors["A2"]=4.
+    #factors["A3"]=4.*math.sqrt(2)
+    #factors["A4"]=2.
+    #factors["AUL"]=1.
+    
+    mhelcoeffs = tf.constant([[2.,0.,0.,0.,0.,0.],[0.,2.*math.sqrt(2),0.,0.,0.,0.],[0.,0.,4.,0.,0.,0.],[0.,0.,0.,4.*math.sqrt(2),0.,0.],[0.,0.,0.,0.,2.,0.],[0.,0.,0.,0.,0.,1.]],dtype=dtype)
+    mhelsums = tf.matmul(helgroupxsecs,mhelcoeffs,transpose_b=True)
+    heltotals = mhelsums[:,-1]
+    angularcoeffs = mhelsums[:,:-1]/mhelsums[:,-1:]
+    
+    helpois = tf.concat([heltotals,tf.reshape(tf.transpose(angularcoeffs),[-1])],axis=0)
+    helpois = tf.identity(helpois,"helpois")
+    outputs.append(helpois)
+    
+    outputname = []
+    
+    for group in helgroups:
+      outputname.append("%s_unpolarizedxsec" % group)
+    for group in helgroups:
+      outputname.append("%s_A0" % group)
+    for group in helgroups:
+      outputname.append("%s_A1" % group)
+    for group in helgroups:
+      outputname.append("%s_A2" % group)
+    for group in helgroups:
+      outputname.append("%s_A3" % group)
+    for group in helgroups:
+      outputname.append("%s_A4" % group)
       
     outputnames.append(outputname)
     
@@ -579,6 +647,32 @@ if options.POIMode == "mu":
         outputname.append("%s_ratiometatotalxsec" % group)
       for group in ratiometagroups:
         outputname.append("%s_ratiometaratio" % group)
+    
+    if nhelmetagroups > 0:
+      #build matrix of cross sections
+      helmetagroupxsecs = tf.reshape(tf.gather(sumpois, tf.reshape(helmetagroupidxs,[-1])),helmetagroupidxs.shape)
+      mhelmetacoeffs = tf.constant([[2.,0.,0.,0.,0.,0.],[0.,2.*math.sqrt(2),0.,0.,0.,0.],[0.,0.,4.,0.,0.,0.],[0.,0.,0.,4.*math.sqrt(2),0.,0.],[0.,0.,0.,0.,2.,0.],[0.,0.,0.,0.,0.,1.]],dtype=dtype)
+      mhelmetasums = tf.matmul(helmetagroupxsecs,mhelmetacoeffs,transpose_b=True)
+      helmetatotals = mhelmetasums[:,-1]
+      angularcoeffs = mhelmetasums[:,:-1]/mhelmetasums[:,-1:]
+
+      helmetapois = tf.concat([helmetatotals,tf.reshape(tf.transpose(angularcoeffs),[-1])],axis=0)
+      helmetapois = tf.identity(helmetapois,"helmetapois")
+      outputs.append(helmetapois)
+      
+      outputname = []
+      for group in helmetagroups:
+        outputname.append("%s_helmeta_unpolarizedxsec" % group)
+      for group in helmetagroups:
+        outputname.append("%s_helmeta_A0" % group)
+      for group in helmetagroups:
+        outputname.append("%s_helmeta_A1" % group)
+      for group in helmetagroups:
+        outputname.append("%s_helmeta_A2" % group)
+      for group in helmetagroups:
+        outputname.append("%s_helmeta_A3" % group)
+      for group in helmetagroups:
+        outputname.append("%s_helmeta_A4" % group)
       
       outputnames.append(outputname)
 
@@ -589,7 +683,6 @@ if options.POIMode == "mu":
     else:
       regsource = pmaskedexp
     
-    taureg = options.regularizationTau
     lregs = tf.zeros_like(l)
     for reggroupidx in reggroupidxs:
       #construct matrix to form discrete 2nd derivatives
@@ -621,6 +714,107 @@ if nnoigroups > 0:
   for idx in noigroupidxs:
     outputname.append("%s_noi" % systs[idx])
   outputnames.append(outputname)
+  
+  
+outputmap = {}
+for output, outputname in zip(outputs,outputnames):
+  for iout,name in enumerate(outputname):
+    outputmap[name] = output[iout]
+
+#polynomial regularization
+if options.doRegularization:
+  for group, firstorder, lastorder, names, bincenters in zip(poly1dreggroups, poly1dreggroupfirstorder, poly1dreggrouplastorder,  poly1dreggroupnames, poly1dreggroupbincenters):
+
+    # values to regularize
+    reglist = []
+    for name in names:
+      reglist.append(outputmap[name])
+    reg = tf.stack(reglist)
+    reg = tf.expand_dims(reg, axis=-1)
+    
+    nterms = bincenters.shape[0]
+    
+    # matrix of polynomial terms
+    pregA = np.zeros((nterms,nterms), dtype=dtype)
+    for i in range(nterms):
+      pregA[:,i] = bincenters**i
+    
+    pregAinv = np.linalg.inv(pregA)
+    
+    # mask for terms to constrain
+    regweights = np.ones((nterms,), dtype=dtype)
+    regweights[firstorder:lastorder+1] = 0.
+    
+    # solve for polynomial coefficients corresponding to current value of
+    # quantities to be regularized
+    polycoeffs = tf.matmul(pregAinv, reg)
+    polycoeffs = tf.squeeze(polycoeffs, axis=-1)
+    polycoeffs = tf.identity(polycoeffs, group)
+    
+    # constraint term
+    lreg = taureg*tf.reduce_sum(regweights*tf.square(polycoeffs))
+    
+    l += lreg
+    lfull += lreg
+    
+    # add polynomial coefficients to output
+    outputs.append(polycoeffs)
+    outputname = []
+    for i in range(nterms):
+      outputname.append("%s_polycoeff1d_%i" % (group, i))
+    outputnames.append(outputname)
+  
+  for group, firstorder, lastorder, fullorder, names, bincenters0, bincenters1 in zip(poly2dreggroups, poly2dreggroupfirstorder, poly2dreggrouplastorder, poly2dreggroupfullorder, poly2dreggroupnames, poly2dreggroupbincenters0, poly2dreggroupbincenters1):
+    
+    #values to regularize
+    reglist = []
+    for name in names:
+      reglist.append(outputmap[name])
+    reg = tf.stack(reglist)
+    reg = tf.expand_dims(reg, axis=-1)
+    
+    nterms = fullorder + 1
+    ntermsfull = np.prod(nterms)
+    
+    # matrix of polynomial terms and term orders
+    pregA = np.zeros((ntermsfull, nterms[0], nterms[1]), dtype=dtype)
+    orders = np.zeros((nterms[0], nterms[1], 2), dtype=np.int32)
+    for i in range(nterms[0]):
+      for j in range(nterms[1]):
+        pregA[:, i,j] = bincenters0**i*bincenters1**j
+        orders[i,j,0] = i
+        orders[i,j,1] = j
+        
+    pregA = np.reshape(pregA, (ntermsfull, ntermsfull))
+    orders = np.reshape(orders, (ntermsfull, 2))
+    
+    pregAinv = np.linalg.inv(pregA)
+    
+    # mask for terms to constrain
+    # terms are kept unconstrained if orders match for either dimension
+    regweights = np.ones((nterms[0], nterms[1]), dtype=dtype)
+    regweights[firstorder[0]:lastorder[0]+1] = 0.
+    regweights[:,firstorder[1]:lastorder[1]+1] = 0.
+    
+    regweights = np.reshape(regweights, (ntermsfull,))
+        
+    # solve for polynomial coefficients corresponding to current value of
+    # quantities to be regularized
+    polycoeffs = tf.matmul(pregAinv, reg)
+    polycoeffs = tf.squeeze(polycoeffs, axis=-1)
+    polycoeffs = tf.identity(polycoeffs, group)
+    
+    lreg = taureg*tf.reduce_sum(regweights*tf.square(polycoeffs))
+    
+    l += lreg
+    lfull += lreg
+    
+    # add polynomial coefficients to output
+    outputs.append(polycoeffs)
+    outputname = []
+    for order in orders:
+      outputname.append("%s_polycoeff2d_%i_%i" % (group, order[0], order[1]))
+    outputnames.append(outputname)
 
 nthreadshess = options.nThreads
 if nthreadshess<0:
@@ -675,7 +869,10 @@ mineigv = tf.reduce_min(eigvals)
 UT = tf.transpose(eigvects)
 isposdef = mineigv > 0.
 gradcol = tf.reshape(grad[:nprof],[-1,1])
-edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessianp,transpose_a=True),gradcol)
+if nsystnoprofile > 0:
+  edm = 0.5*tf.matmul(tf.matmul(gradcol,invhessianp,transpose_a=True),gradcol)
+else:
+  edm = 0.5*tf.matmul(gradcol, tf.linalg.solve(hessianp, gradcol), transpose_a = True)
 
 mineigvinv = tf.reduce_min(tf.self_adjoint_eigvals(invhessian))
 
@@ -1057,7 +1254,7 @@ doh5output = options.doh5Output
 if doh5output:
   #initialize h5py output
   postfix = options.postfix if options.postfix else ''
-  h5fout = h5py_cache.File(outdir +'fitresults_%i_%s.hdf5' % (seed,postfix), chunk_cache_mem_size=cacheSize, mode='w')
+  h5fout = h5py.File(outdir + 'fitresults_%i_%s.hdf5' % (seed,postfix), rdcc_nbytes=cacheSize, mode='w')
 
   #copy some info to output file
   f.copy('hreggroups',h5fout)
@@ -1356,7 +1553,8 @@ for itoy in range(ntoys):
     if options.randomizeStart:
       sess.run(asimovrandomizestart)
     else:
-      dofit = False
+      if not options.doRegularization:
+        dofit = False
   elif options.toys == 0:
     print("Running fit to observed data")
     sess.run(dataobsassign)
@@ -1455,9 +1653,13 @@ for itoy in range(ntoys):
       evs = None
       UTval = None
       
-    if isposdefval and edmval > -edmtol and mineigvalinv > 0.:
+    if isposdefval and edmval > -edmtol:
       status = 0
     else:
+      status = 1
+      
+    #additional check when using non-profiled nuisances
+    if nsystnoprofile > 0 and mineigvalinv <= 0.:
       status = 1
     
     print("status = %i, errstatus = %i, nllval = %f, nllvalfull = %f, edmval = %e, mineigval = %e, mineigvalinv = %e" % (status,errstatus,nllval,nllvalfull,edmval,mineigval,mineigvalinv))  
