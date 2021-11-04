@@ -56,7 +56,7 @@ parser.add_option("","--expectSignal", default=1., type=float, help="rate multip
 parser.add_option("","--seed", default=123456789, type=int, help="random seed for toys")
 parser.add_option("","--fitverbose", default=0, type=int, help="verbosity level for fit")
 parser.add_option("","--minos", default=[], type="string", action="append", help="run minos on the specified variables")
-parser.add_option("","--scan", default=[], type="string", action="append", help="run likelihood scan on the specified variables")
+mparser.add_option("","--scan", default=[], type="string", action="append", help="run likelihood scan on the specified variables")
 parser.add_option("","--scanPoints", default=16, type=int, help="default number of points for likelihood scan")
 parser.add_option("","--scanRange", default=3., type=float, help="default scan range in terms of hessian uncertainty")
 parser.add_option("","--scanRangeUsePrefit", default=False, action='store_true', help="use prefit uncertainty to define scan range")
