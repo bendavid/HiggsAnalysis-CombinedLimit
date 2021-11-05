@@ -284,7 +284,7 @@ for chan in chans:
     nbinschan = 1
   else:
     #print chan, "looking at this channel"
-    data_obs_chan_hist = MB.getShape(chan,"data_obs")
+    data_obs_chan_hist = MB.getShape(chan,options.dataname)
     #exclude overflow/underflow bins
     nbinschan = data_obs_chan_hist.GetNbinsX()*data_obs_chan_hist.GetNbinsY() * data_obs_chan_hist.GetNbinsZ()
     nbins += nbinschan
@@ -349,7 +349,7 @@ for chan in chans:
   
   if not chan in options.maskedChan:
     #get histogram, convert to np array with desired type, and exclude underflow/overflow bins
-    data_obs_chan_hist = MB.getShape(chan,"data_obs")
+    data_obs_chan_hist = MB.getShape(chan,options.dataname)
     data_obs_chan = hist2array(data_obs_chan_hist, include_overflow=False).ravel().astype(dtype)
     data_obs_chan_hist.Delete()
     nbinschan = data_obs_chan.shape[0]
