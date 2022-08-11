@@ -1788,7 +1788,7 @@ for itoy in range(ntoys):
         array2hist(invhessoutval, covarianceHist)
     else:
       sigmasv = -99.*np.ones_like(outvals)
-      outchsqs.append(-99.)
+      outchisqs.append(-99.)
           
     minoserrsup = -99.*np.ones_like(sigmasv)
     minoserrsdown = -99.*np.ones_like(sigmasv)
