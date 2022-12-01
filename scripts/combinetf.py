@@ -647,6 +647,8 @@ if options.POIMode == "mu":
         outputname.append("%s_ratiometatotalxsec" % group)
       for group in ratiometagroups:
         outputname.append("%s_ratiometaratio" % group)
+
+      outputnames.append(outputname)
     
     if nhelmetagroups > 0:
       #build matrix of cross sections
