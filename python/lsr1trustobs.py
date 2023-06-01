@@ -165,7 +165,7 @@ class SR1TrustExact:
         islast = tf.concat([ischange,[True]],axis=0)
         islast1 = islast[1:]
         issingle1 = tf.logical_and(ischange,islast1)
-        issingle = tf.concat([ischange[0:1], issingle1],axis=0)
+        issingle = tf.concat([islast[0:1], issingle1],axis=0)
         isrep = tf.logical_not(issingle)
         isfirstrep = tf.logical_and(isfirst,isrep)
         islastrep = tf.logical_and(islast,isrep)

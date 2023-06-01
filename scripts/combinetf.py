@@ -104,6 +104,7 @@ procs = f['hprocs'][...]
 signals = f['hsignals'][...]
 systs = f['hsysts'][...]
 systsnoprofile = f['hsystsnoprofile'][...]
+systsnoconstraint = f['hsystsnoconstraint'][...]
 systgroups = f['hsystgroups'][...]
 systgroupidxs = f['hsystgroupidxs'][...]
 chargegroups = f['hchargegroups'][...]
@@ -160,6 +161,7 @@ nbinsmasked = nbinsfull - nbins
 nproc = len(procs)
 nsyst = len(systs)
 nsystnoprofile = len(systsnoprofile)
+nsystnoconstraint = len(systsnoconstraint)
 nsignals = len(signals)
 nsystgroups = len(systgroups)
 nchargegroups = len(chargegroups)
@@ -905,18 +907,20 @@ if options.doImpacts:
   if options.binByBinStat:
     gradNoBBB = tf.gradients(l,x,gate_gradients=True, stop_gradients=beta)[0]
     hessianNoBBB = jacobian(gradNoBBB,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False,stop_gradients=beta)
-    if nsystnoprofile > 0:
-      ciexpNoBBB = None
-      if options.useExpNonProfiledErrs:
-        ciexpNoBBB = tf.get_variable("ciexpNoBBB",[nprof,nsystnoprofile],dtype=dtype,initializer=tf.zeros_initializer)
-        #to calculate expected ci
-        _,_,_,ciNoBBB = invhessnoprofile(hessianNoBBB)
-      invhessianNoBBB,_,_,_ = invhessnoprofile(hessianNoBBB,ciexpNoBBB)
 
-    else:
-      invhessianNoBBB = tf.matrix_inverse(hessianNoBBB)
-  hessianStat = hessianNoBBB[:npoi,:npoi]
+  nstat = npoi + nsystnoconstraint
+
+  # stat-only hessian includes POIs and NoConstraint nuisance parameters
+  hessianStat = hessianNoBBB[:nstat,:nstat]
   invhessianStat = tf.matrix_inverse(hessianStat)
+
+  # stat+BBB hessian
+  if options.binByBinStat:
+    hessianStatBBB = hessian[:nstat,:nstat]
+    invhessianStatBBB = tf.matrix_inverse(hessianStatBBB)
+  else:
+    hessianStatBBB = hessianStat
+    invhessianStatBBB = invhessianStat
 
   mcov = invhessian[npoi:,npoi:]
   groupmcovs = []
@@ -945,15 +949,16 @@ if options.doImpacts:
       nuisancegroupimpactlist.append(vimpact)
     
     #statistical uncertainties only
-    jacoutstat = jacoutNoBBB[:nout,:npoi]
+    jacoutstat = jacoutNoBBB[:nout,:nstat]
     invhessoutStat = tf.matmul(jacoutstat,tf.matmul(invhessianStat,jacoutstat,transpose_b=True))
     impactStat = tf.sqrt(tf.matrix_diag_part(invhessoutStat))
     nuisancegroupimpactlist.append(impactStat)
 
     #bin by bin template statistical uncertainties
     if options.binByBinStat:
-      invhessianoutNoBBB = tf.matmul(jacoutNoBBB,tf.matmul(invhessianNoBBB,jacoutNoBBB,transpose_b=True))
-      impactBBBsq = tf.matrix_diag_part(invhessianout - invhessianoutNoBBB)[:nout]
+      jacoutStatBBB = jacout[:nout,:nstat]
+      invhessianoutStatBBB = tf.matmul(jacoutStatBBB,tf.matmul(invhessianStatBBB,jacoutStatBBB,transpose_b=True))
+      impactBBBsq = tf.matrix_diag_part(invhessianoutStatBBB - invhessoutStat)[:nout]
       impactBBB = tf.sqrt(tf.maximum(tf.zeros_like(impactBBBsq),impactBBBsq))
       nuisancegroupimpactlist.append(impactBBB)
     

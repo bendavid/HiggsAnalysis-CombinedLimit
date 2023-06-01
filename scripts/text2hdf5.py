@@ -84,38 +84,46 @@ dtype = 'float64'
 MB = ShapeBuilder(DC, options)
 
 #list of processes, signals first
-procs = []
-for proc in DC.processes:
-  if DC.isSignal[proc]:
-    procs.append(proc)
-
-for proc in DC.processes:
-  if not DC.isSignal[proc]:
-    procs.append(proc)    
-
-#list of signals preserving datacard order
 signals = []
+bkgs = []
+
 for proc in DC.processes:
   if DC.isSignal[proc]:
     signals.append(proc)
+  else:
+    bkgs.append(proc)
+
+procs = signals + bkgs
       
-#list of systematic uncertainties (nuisances)
-systsd = OrderedDict()
-systs = []
-systsnoprofile = []
-systsnoconstraint = []
+# list of systematic uncertainties (nuisances)
+# to facilitate later operations there are orders by
+# 1) NoConstraint nuisances, 2) standard nuisances, 3) NoProfile nuisances
+systdatanoconstraint = []
+systdatastandard = []
+systdatanoprofile = []
+
 if options.doSystematics:
   for syst in DC.systs:
-    if not 'NoProfile' in syst[2]:
-      systsd[syst[0]] = syst
-      systs.append(syst[0])
-  for syst in DC.systs:
-    if 'NoProfile' in syst[2]:
-      systsd[syst[0]] = syst
-      systs.append(syst[0])
-      systsnoprofile.append(syst[0])
     if 'NoConstraint' in syst[2]:
-        systsnoconstraint.append(syst[0])
+      systdatanoconstraint.append(syst)
+    elif 'NoProfile' in syst[2]:
+      systdatanoprofile.append(syst)
+    else:
+      systdatastandard.append(syst)
+
+systdata = systdatanoconstraint + systdatastandard + systdatanoprofile
+
+systs = []
+for syst in systdata:
+  systs.append(syst[0])
+
+systsnoconstraint = []
+for syst in systdatanoconstraint:
+  systsnoconstraint.append(syst[0])
+
+systsnoprofile = []
+for syst in systdatanoprofile:
+  systsnoprofile.append(syst[0])
 
 nsyst = len(systs)
 
@@ -437,7 +445,8 @@ for chan in chans:
       
     norm_chan_scaled = None
     
-    for isyst,(name,syst) in enumerate(systsd.items()):
+    for isyst,syst in enumerate(systdata):
+      name = syst[0]
       stype = syst[2]
         
       if stype in ['lnN','lnNNoProfile','lnNNoConstraint']:
@@ -664,6 +673,9 @@ hsysts[...] = systs
 
 hsystsnoprofile = f.create_dataset("hsystsnoprofile", [len(systsnoprofile)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsystsnoprofile[...] = systsnoprofile
+
+hsystsnoconstraint = f.create_dataset("hsystsnoconstraint", [len(systsnoconstraint)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
+hsystsnoconstraint[...] = systsnoconstraint
 
 hsystgroups = f.create_dataset("hsystgroups", [len(systgroups)], dtype=h5py.special_dtype(vlen=str), compression="gzip")
 hsystgroups[...] = systgroups
