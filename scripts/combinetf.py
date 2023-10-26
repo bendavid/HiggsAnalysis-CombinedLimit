@@ -31,7 +31,7 @@ ROOT.gROOT.SetBatch(True)
 ROOT.PyConfig.IgnoreCommandLineOptions = True
 argv.remove( '-b-' )
 
-from root_numpy import array2hist
+from root_numpy import array2hist, tree2array
 
 from array import array
 
@@ -47,7 +47,7 @@ if doplotting:
 parser = OptionParser(usage="usage: %prog [options] datacard.txt -o output \nrun with --help to get list of options")
 parser.add_option("-o","--output", default=None, type="string", help="output file name")
 parser.add_option("-t","--toys", default=0, type=int, help="run a given number of toys, 0 fits the data (default), and -1 fits the asimov toy")
-parser.add_option("","--toysFrequentist", default=True, action='store_true', help="run frequentist-type toys by randomizing constraint minima")
+parser.add_option("","--toysBayesian", default=False, action='store_true', help="run bayesian-type toys (otherwise frequentist)")
 parser.add_option("","--bypassFrequentistFit", default=True, action='store_true', help="bypass fit to data when running frequentist toys to get toys based on prefit expectations")
 parser.add_option("","--bootstrapData", default=False, action='store_true', help="throw toys directly from observed data counts rather than expectation from templates")
 parser.add_option("","--randomizeStart", default=False, action='store_true', help="randomize starting values for fit (only implemented for asimov dataset for now")
@@ -70,24 +70,34 @@ parser.add_option("","--computeHistErrors", default=False, action='store_true', 
 parser.add_option("","--binByBinStat", default=False, action='store_true', help="add bin-by-bin statistical uncertainties on templates (using Barlow and Beeston 'lite' method")
 parser.add_option("","--correlateXsecStat", default=False, action='store_true', help="Assume that cross sections in masked channels are correlated with expected values in templates (ie computed from the same MC events)")
 parser.add_option("","--postfix", default="",type="string", help="add _<postfix> to output root file")
-parser.add_option("", "--outputDir", default="",type="string", help="Specify folder for output file (it is created if not existing). If SAME is given, use same folder as input file")
+parser.add_option("","--outputDir", default="",type="string", help="Specify folder for output file (it is created if not existing). If SAME is given, use same folder as input file")
 parser.add_option("","--doImpacts", default=False, action='store_true', help="Compute impacts on POIs per nuisance parameter and per-nuisance parameter group")
 parser.add_option("","--useSciPyMinimizer", default=False, action='store_true', help="Use SciPy constrained trust region minimizer for instead of native tensorflow one")
 parser.add_option("","--doRegularization", default=False, action='store_true', help="Use curvature-based regularization if defined in datacard")
 parser.add_option("","--regularizationUseExpected", default=False, action='store_true', help="Use expectation in regularization (by regularizing mu instead of cross section)")
 parser.add_option("","--regularizationUseLog", default=False, action='store_true', help="Use logarithm of poi for curvature regularization")
 parser.add_option("","--regularizationTau", default=0.1, type=float, help="regularization strength")
-parser.add_option("","--doh5Output", default=False, action='store_true', help="store additional h5py output for offline analyis/debugging")
+parser.add_option("","--noh5Output", default=False, action='store_true', help="store additional h5py output for offline analyis/debugging")
 parser.add_option("","--doSmoothnessTest", default=False, action='store_true', help="run statistical smoothness test on absolute cross sections based on polynomial fits to regularization groups")
 parser.add_option("","--smoothnessTestMaxOrder", default=4, type=int, help="maximum polynomial order for smoothness test")
 parser.add_option("","--useExpNonProfiledErrs", default=False, action='store_true', help="use expected uncertainties for non-profiled nuisances")
 parser.add_option("","--yieldProtectionCutoff", default=-1., type=float, help="cutoff used to protect total yield from negative values.")
+parser.add_option("","--noHessian", default=False, action='store_true', help="Skip calculation of hessian matrix")
+parser.add_option("","--saturated", default=False, action='store_true', help="Calculate negative log likelihood value for saturated model (for using it in goodness of fit tests)")
+parser.add_option("","--chisqFit", default=False, action='store_true',  help="Perform chi-square fit instead of likelihood fit")
+parser.add_option("","--externalCovariance", default=False, action='store_true',  help="Using an external covariance matrix for the observations in the chi-square fit")
+parser.add_option("","--doJacobian", default = False, action='store_true', help="Compute and store Jacobian of expected event counts with respect to fit parameters")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
     parser.print_usage()
     exit(1)
-    
+
+if options.externalCovariance and not options.chisqFit:
+  raise Exception('option "--externalCovariance" only works with "--chisqFit"')
+if (options.chisqFit or options.externalCovariance) and options.binByBinStat:
+  raise Exception('option "--binByBinStat" currently not supported for options "--externalCovariance" and "--chisqFit"')
+
 seed = options.seed
 print(seed)
 np.random.seed(seed)
@@ -140,10 +150,56 @@ noigroups = f['hnoigroups'][...]
 noigroupidxs = f['hnoigroupidxs'][...]
 maskedchans = f['hmaskedchans'][...]
 
+for x in [
+  (procs, "hprocs"),
+  (signals, "hsignals"),
+  (systs, "hsysts"),
+  (systsnoprofile, "hsystsnoprofile"),
+  (systsnoconstraint, "hsystsnoconstraint"),
+  (systgroups, "hsystgroups"),
+  (systgroupidxs, "hsystgroupidxs"),
+  (chargegroups, "hchargegroups"),
+  (chargegroupidxs, "hchargegroupidxs"),
+  (polgroups, "hpolgroups"),
+  (polgroupidxs, "hpolgroupidxs"),
+  (helgroups, "hhelgroups"),
+  (helgroupidxs, "hhelgroupidxs"),
+  (sumgroups, "hsumgroups"),
+  (sumgroupsegmentids, "hsumgroupsegmentids"),
+  (sumgroupidxs, "hsumgroupidxs"),
+  (chargemetagroups, "hchargemetagroups"),
+  (chargemetagroupidxs, "hchargemetagroupidxs"),
+  (ratiometagroups, "hratiometagroups"),
+  (ratiometagroupidxs, "hratiometagroupidxs"),
+  (helmetagroups, "hhelmetagroups"),
+  (helmetagroupidxs, "hhelmetagroupidxs"),
+  (reggroups, "hreggroups"),
+  (reggroupidxs, "hreggroupidxs"),
+  (poly1dreggroups, "hpoly1dreggroups"),
+  (poly1dreggroupfirstorder, "hpoly1dreggroupfirstorder"),
+  (poly1dreggrouplastorder, "hpoly1dreggrouplastorder"),
+  (poly1dreggroupnames, "hpoly1dreggroupnames"),
+  (poly1dreggroupbincenters, "hpoly1dreggroupbincenters"),
+  (poly2dreggroups, "hpoly2dreggroups"),
+  (poly2dreggroupfirstorder, "hpoly2dreggroupfirstorder"),
+  (poly2dreggrouplastorder, "hpoly2dreggrouplastorder"),
+  (poly2dreggroupfullorder, "hpoly2dreggroupfullorder"),
+  (poly2dreggroupnames, "hpoly2dreggroupnames"),
+  (poly2dreggroupbincenters0, "hpoly2dreggroupbincenters0"),
+  (poly2dreggroupbincenters1, "hpoly2dreggroupbincenters1"),
+  (noigroups, "hnoigroups"),
+  (noigroupidxs, "hnoigroupidxs"),
+  (maskedchans, "hmaskedchans"),
+]:
+  print(x[1], x[0].shape)
+
 #load arrays from file
 hconstraintweights = f['hconstraintweights']
 hdata_obs = f['hdata_obs']
 sparse = not 'hnorm' in f
+
+if options.externalCovariance:
+  hdata_cov_inv = f['hdata_cov_inv']
 
 if sparse:
   hnorm_sparse = f['hnorm_sparse']
@@ -192,6 +248,9 @@ nsystgroupsfull = len(systgroupsfull)
 #returned tensors are evaluated for the first time inside the graph
 constraintweights = maketensor(hconstraintweights)
 data_obs = maketensor(hdata_obs)
+if options.externalCovariance:
+  data_cov_inv = maketensor(hdata_cov_inv)
+
 if options.binByBinStat:
   hkstat = f['hkstat']
   kstat = maketensor(hkstat)
@@ -428,13 +487,27 @@ nexpnom = tf.Variable(nexp, trainable=False, name="nexpnom")
 nexpnomsafe = tf.where(nobsnull, tf.ones_like(nobs), nexpnom)
 lognexpnom = tf.log(nexpnomsafe)
 
+if options.saturated:
+  #saturated model  
+  nobssafe = tf.where(nobsnull, tf.ones_like(nobs), nobs)
+  lognobs = tf.log(nobssafe)
+
+  lsaturated = tf.reduce_sum(-nobs*lognobs + nobs, axis=-1)
+
 #final likelihood computation
 
-#poisson term  
-lnfull = tf.reduce_sum(-nobs*lognexp + nexp, axis=-1)
+if options.chisqFit:
+  # provided covariance (unfolded) or Poisson variance (detector-level)
+  if not options.externalCovariance:
+    if any(nobs<=0):
+      raise RuntimeError("Bins in 'nobs <= 0' encountered, chi^2 fit can not be performed.")
+    data_cov_inv = tf.diag(tf.reciprocal(nobs))
 
-#poisson term with offset to improve numerical precision
-ln = tf.reduce_sum(-nobs*(lognexp-lognexpnom) + nexp-nexpnom, axis=-1)
+  residual = tf.reshape(nobs-nexp,[-1,1]) #chi2 residual  
+  ln = lnfull = 0.5 * tf.reduce_sum(tf.matmul(residual,tf.matmul(data_cov_inv,residual),transpose_a=True))
+else: #poisson-likelihood fit
+  lnfull = tf.reduce_sum(-nobs*lognexp + nexp, axis=-1) #poisson term
+  ln = tf.reduce_sum(-nobs*(lognexp-lognexpnom) + nexp-nexpnom, axis=-1) #poisson term with offset to improve numerical precision
 
 #constraints
 lc = tf.reduce_sum(constraintweights*0.5*tf.square(theta - theta0))
@@ -1024,6 +1097,10 @@ if options.saveHists:
   nexpfullerr = experr(nexpfull,invhessianchol)
   nexpsigerr = experr(nexpsig, invhessianchol)
   nexpbkgerr = experr(nexpbkg, invhessianchol)
+
+  # compute jacobian for statistical tests
+  nexpfulljac = jacobian(nexpfullcentral,x,gate_gradients=True,parallel_iterations=nthreadshess,back_prop=False)
+
   
 lb = np.concatenate((-np.inf*np.ones([npoi],dtype=dtype),-np.inf*np.ones([nsyst],dtype=dtype)),axis=0)
 ub = np.concatenate((np.inf*np.ones([npoi],dtype=dtype),np.inf*np.ones([nsyst],dtype=dtype)),axis=0)
@@ -1114,6 +1191,9 @@ if options.outputDir:
 fname = outdir + (options.output if options.output else 'fitresults_%i.root' % seed)
 if options.postfix:
   fname = fname.replace(".root","_{pf}.root".format(pf=options.postfix))
+
+doh5output = not options.noh5Output
+
 fout = ROOT.TFile( fname , 'recreate' )
 tree = ROOT.TTree("fitresults", "fitresults")
 
@@ -1158,6 +1238,11 @@ tree.Branch('ndofpartial',tndofpartial,'ndofpartial/I')
 
 ttaureg = array('d',[0.])
 tree.Branch('taureg',ttaureg,'taureg/D')
+
+if options.saturated:
+  # add information of saturated model
+  tsatnllvalfull = array('d',[0.])
+  tree.Branch('satnllvalfull',tsatnllvalfull,'satnllvalfull/D')
 
 maxorder = options.smoothnessTestMaxOrder
 tsmoothchisqs = []
@@ -1257,15 +1342,24 @@ for syst in systs:
   tree.Branch('%s_minosdown' % systname, tthetaminosdown, '%s_minosdown/F' % systname)
   tree.Branch('%s_gen' % systname, tthetagenval, '%s_gen/F' % systname)
 
-doh5output = options.doh5Output
-
 if doh5output:
   #initialize h5py output
   h5fout = h5py.File(fname.replace(".root",".hdf5"), rdcc_nbytes=cacheSize, mode='w')
 
   #copy some info to output file
+
+  f.copy('hprocs', h5fout)
+  f.copy('hsignals', h5fout)
+  f.copy('hsysts',h5fout)
+  f.copy('hsystsnoprofile', h5fout)
+  f.copy('hsystsnoconstraint', h5fout)
+  f.copy('hsystgroups', h5fout)
+  f.copy('hsumgroups', h5fout)
+  f.copy('hnoigroups', h5fout)
   f.copy('hreggroups',h5fout)
   f.copy('hreggroupidxs',h5fout)
+  if 'meta' in f.keys():
+    f.copy('meta',h5fout)
 
   outnames = []
   for output,outputname in zip(outputs,outputnames):
@@ -1482,6 +1576,16 @@ def fillHists(tag, witherrors=options.computeHistErrors):
   expbkgHist = ROOT.TH1D('expbkg_%s' % tag,'',nbinsfull,-0.5, float(nbinsfull)-0.5)
   hists.append(expbkgHist)
   array2hist(nexpbkgval,expbkgHist, errors=nexpbkgerrval)
+
+  if tag=="postfit" and options.doJacobian:
+      nexpfulljacval = sess.run(nexpfulljac)
+
+      nx = npoi + nsyst
+
+      expfulljacHist = ROOT.TH2D('expfulljac_%s' % tag, '', nbinsfull, -0.5, float(nbinsfull)-0.5, nx, -0.5, float(nx)-0.5)
+      hists.append(expfulljacHist)
+      array2hist(nexpfulljacval, expfulljacHist)
+
   
   for iproc,proc in enumerate(procs):
     expHist = ROOT.TH1D('expproc_%s_%s' % (proc,tag),'',nbinsfull,-0.5, float(nbinsfull)-0.5)
@@ -1532,7 +1636,7 @@ if nsystnoprofile>0. and options.useExpNonProfiledErrs:
     ciexpv = sess.run(ci)
   
 #prefit to data if needed
-if options.toys>0 and options.toysFrequentist and not options.bypassFrequentistFit:  
+if options.toys>0 and not options.toysBayesian and not options.bypassFrequentistFit:  
   sess.run(dataobsassign)
   sess.run(nexpnomassign)
   minimize()
@@ -1567,7 +1671,7 @@ for itoy in range(ntoys):
     sess.run(dataobsassign)
   else:
     print("Running toy %i" % itoy)  
-    if options.toysFrequentist:
+    if not options.toysBayesian:
       #randomize nuisance constraint minima
       sess.run(frequentistassign)
     else:
@@ -1584,7 +1688,7 @@ for itoy in range(ntoys):
       
     if options.bootstrapData:
       #randomize from observed data
-      if options.binByBinStat and options.toysFrequentist:
+      if options.binByBinStat and not options.toysBayesian:
         raise Exception("Since bin-by-bin statistical uncertainties are always propagated in a bayesian manner, they cannot currently be consistently\
           propagated for bootstrap toys")
       sess.run(dataobsassign)
@@ -1645,21 +1749,26 @@ for itoy in range(ntoys):
     #get fit output
     xval, outvalss, thetavals, theta0vals, nllval, nllvalfull = sess.run([x,outputs,theta,theta0,l,lfull])
     dnllval = 0.
-    #get inverse hessians for error calculation (can fail if matrix is not invertible)
-    try:
-      #invhessval,mineigval,isposdefval,edmval,invhessoutvals = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts])
-      hessval,invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval,mineigvalinv = sess.run([hessian,invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT,mineigvinv])
-      errstatus = 0
-    except:
-      edmval = -99.
-      isposdefval = False
-      mineigval = -99.
-      mineigvalinv = -99.
-      invhessoutvals = outvalss
-      errstatus = 1
-      evs = None
-      UTval = None
-      
+
+    # set default values
+    edmval = -99.
+    isposdefval = False
+    mineigval = -99.
+    mineigvalinv = -99.
+    invhessoutvals = outvalss
+    errstatus = 1
+    evs = None
+    UTval = None      
+
+    if not options.noHessian:
+      #get inverse hessians for error calculation (can fail if matrix is not invertible)
+      try:
+        #invhessval,mineigval,isposdefval,edmval,invhessoutvals = sess.run([invhessian,mineigv,isposdef,edm,invhessianouts])
+        hessval,invhessval,mineigval,isposdefval,edmval,invhessoutvals,evs,UTval,mineigvalinv = sess.run([hessian,invhessian,mineigv,isposdef,edm,invhessianouts,eigvals,UT,mineigvinv])
+        errstatus = 0
+      except:
+        pass
+
     if isposdefval and edmval > -edmtol:
       status = 0
     else:
@@ -1672,7 +1781,7 @@ for itoy in range(ntoys):
     print("status = %i, errstatus = %i, nllval = %f, nllvalfull = %f, edmval = %e, mineigval = %e, mineigvalinv = %e" % (status,errstatus,nllval,nllvalfull,edmval,mineigval,mineigvalinv))  
     
     edmtolretry = 1e-3
-    if isposdefval and edmval < edmtolretry and edmval>=0.:
+    if (isposdefval and edmval < edmtolretry and edmval>=0.) or options.noHessian:
       break
   
   if errstatus==0:
@@ -1788,7 +1897,7 @@ for itoy in range(ntoys):
       print([outname,nout,chisq])
       outchisqs.append(chisq)
       
-      if not options.toys > 0:
+      if not options.toys > 1:
         variances2D     = parameterErrors[np.newaxis].T * parameterErrors
         correlationMatrix = np.divide(invhessoutval, variances2D)
         array2hist(correlationMatrix, correlationHist)
@@ -1810,8 +1919,15 @@ for itoy in range(ntoys):
   if options.saveHists and not options.toys > 1:
     postfithists = fillHists('postfit')
     
-  if options.doImpacts and not options.toys > 0:
-    dName = 'asimov' if options.toys < 0 else 'data fit'
+  if options.doImpacts and not options.toys > 1:
+    
+    if options.toys < 0:
+      dName = 'asimov' 
+    elif options.toys > 0:
+      dName = 'toy fit'
+    else:
+      dName = 'data fit'
+
     nuisanceimpactoutvals, nuisancegroupimpactoutvals = sess.run([nuisanceimpactouts,nuisancegroupimpactouts])
     for output, outputname, nuisanceimpactoutval, nuisancegroupimpactoutval in zip(outputs,outputnames,nuisanceimpactoutvals,nuisancegroupimpactoutvals):
       outname = ":".join(output.name.split(":")[:-1])
@@ -1821,6 +1937,14 @@ for itoy in range(ntoys):
       #print ">>> nout: %d" % nout
       if nout == 0: continue  # to avoid errors with --POImode None
       ###
+     
+      if doh5output:
+        hnuisanceimpactoutval = h5fout.create_dataset("nuisance_impact_"+outname, nuisanceimpactoutval.shape, dtype=nuisanceimpactoutval.dtype, compression="gzip")
+        hnuisanceimpactoutval[...] = nuisanceimpactoutval
+
+        hnuisancegroupimpactoutval = h5fout.create_dataset("nuisance_group_impact_"+outname, nuisancegroupimpactoutval.shape, dtype=nuisancegroupimpactoutval.dtype, compression="gzip")
+        hnuisancegroupimpactoutval[...] = nuisancegroupimpactoutval
+
       nuisanceImpactHist = ROOT.TH2D('nuisance_impact_'+outname, 'per-nuisance impacts for '+dName+' in '+outname, int(nout), 0., 1., int(nsyst), 0., 1.)
       nuisanceGroupImpactHist = ROOT.TH2D('nuisance_group_impact_'+outname, 'per-nuisance-group impacts for '+dName+' in '+outname, int(nout), 0., 1., int(nsystgroupsfull), 0., 1.)
       
@@ -1836,8 +1960,8 @@ for itoy in range(ntoys):
         nuisanceImpactHist.GetYaxis().SetBinLabel(isyst+1, '%s' % syst)
 
       for isystgroup, systgroup in enumerate(systgroupsfull):
-        nuisanceGroupImpactHist.GetYaxis().SetBinLabel(isystgroup+1, '%s' % systgroup)
-            
+        nuisanceGroupImpactHist.GetYaxis().SetBinLabel(isystgroup+1, '%s' % systgroup)  
+
       array2hist(nuisanceimpactoutval,nuisanceImpactHist)
       array2hist(nuisancegroupimpactoutval,nuisanceGroupImpactHist)
 
@@ -1896,6 +2020,10 @@ for itoy in range(ntoys):
     dxvaldown = -(xvalminosdown[erridx]-outthetaval[erridx])
     minoserrsdown[erroutidx] = dxvaldown
         
+  if options.saturated:
+    nllvalsaturated = sess.run(lsaturated) 
+    tsatnllvalfull[0] = nllvalsaturated
+
   tstatus[0] = status
   terrstatus[0] = errstatus
   tedmval[0] = edmval
@@ -2012,7 +2140,6 @@ for itoy in range(ntoys):
           tthetaval[0] = thetaval
 
         tree.Fill()
-
 
 fout.Write()
 fout.Close()

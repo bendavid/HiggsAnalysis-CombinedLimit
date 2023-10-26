@@ -45,6 +45,8 @@ parser.add_option("", "--scaleMaskedYields", type=float, default=1.,  help="Scal
 parser.add_option("", "--postfix", default="",type="string", help="add _<postfix> to output hdf5 file")
 parser.add_option("", "--clipSystVariations", type=float, default=-1.,  help="Clipping of syst variations (all processes)")
 parser.add_option("", "--clipSystVariationsSignal", type=float, default=-1.,  help="Clipping of syst variations (signal processes)")
+parser.add_option("", "--externalCovariance", default=False, action='store_true',  help="Using an external covariance matrix for the observations in the chi-square fit")
+parser.add_option("", "--addMCStat", default=False, action='store_true', help="add MC stat uncertainty to covariance matrix (compatible with --externalCovariance only)")
 (options, args) = parser.parse_args()
 
 if len(args) == 0:
@@ -52,6 +54,9 @@ if len(args) == 0:
     exit(1)
 
 options.fileName = args[0]
+
+if options.addMCStat and not options.externalCovariance:
+  raise Exception('options "--addMCStat" can only be used in combination with "--externalCovariance"')
 
 
 if not options.fileName.endswith(".pkl"):
@@ -327,6 +332,9 @@ data_obs = np.zeros([nbins], dtype)
 sumw = np.zeros([nbins], dtype)
 sumw2 = np.zeros([nbins], dtype)
 
+if options.externalCovariance:
+    data_cov = np.zeros([nbins,nbins], dtype)
+
 if options.sparse:
   maxsparseidx = max(nbinsfull*nproc,2*nsyst)
   
@@ -364,6 +372,15 @@ for chan in chans:
     #write to output array
     data_obs[ibin:ibin+nbinschan] = data_obs_chan
     data_obs_chan = None
+
+    if options.externalCovariance:
+        data_cov_chan_hist = MB.getShape(chan,options.covname)
+        data_cov_chan = hist2array(data_cov_chan_hist, include_overflow=False).astype(dtype)
+        data_cov_chan_hist.Delete()
+        #write to output array (block-diagonal for now)
+        data_cov[ibin:ibin+nbinschan,ibin:ibin+nbinschan] = data_cov_chan
+        data_cov_chan = None
+
   else:
     nbinschan = 1
   
@@ -787,6 +804,11 @@ constraintweights = None
 
 nbytes += writeFlatInChunks(data_obs, f, "hdata_obs", maxChunkBytes = chunkSize)
 data_obs = None
+
+if options.externalCovariance:
+    full_cov = np.add(data_cov,np.diag(sumw2)) if options.addMCStat else data_cov
+    nbytes += writeFlatInChunks(np.linalg.inv(full_cov), f, "hdata_cov_inv", maxChunkBytes = chunkSize)
+    data_cov = None
 
 nbytes += writeFlatInChunks(kstat, f, "hkstat", maxChunkBytes = chunkSize)
 kstat = None
