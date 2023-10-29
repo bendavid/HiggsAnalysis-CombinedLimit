@@ -894,9 +894,9 @@ if options.doRegularization:
     outputnames.append(outputname)
 
 nthreadshess = options.nThreads
-if nthreadshess<0:
+if nthreadshess < 0:
   nthreadshess = multiprocessing.cpu_count()
-nthreadshess = min(nthreadshess,nparms)
+nthreadshess = min(nthreadshess,max(1,nparms))
 
 grad = tf.gradients(l,x,gate_gradients=True)[0]
 gradp = grad
