@@ -50,7 +50,7 @@ parser.add_option("-o","--output", default=None, type="string", help="output fil
 parser.add_option("-t","--toys", default=0, type=int, help="run a given number of toys, 0 fits the data (default), and -1 fits the asimov toy")
 parser.add_option("-p","--pseudodata", default=None, type=str, help="run fit on pseudodata with the given index")
 parser.add_option("","--toysBayesian", default=False, action='store_true', help="run bayesian-type toys (otherwise frequentist)")
-parser.add_option("","--bypassFrequentistFit", default=True, action='store_true', help="bypass fit to data when running frequentist toys to get toys based on prefit expectations")
+parser.add_option("","--postfitToys", default=False, action='store_true', help="run fit to data before generating pseudodata (even for asimov) so that toys are run from postfit values of nuisances and pois")
 parser.add_option("","--bootstrapData", default=False, action='store_true', help="throw toys directly from observed data counts rather than expectation from templates")
 parser.add_option("","--randomizeStart", default=False, action='store_true', help="randomize starting values for fit (only implemented for asimov dataset for now")
 parser.add_option("","--tolerance", default=1e-3, type=float, help="convergence tolerance for minimizer")
@@ -1846,7 +1846,7 @@ if nsystnoprofile>0. and options.useExpNonProfiledErrs:
     ciexpv = sess.run(ci)
   
 #prefit to data if needed
-if options.toys>0 and not options.toysBayesian and not options.bypassFrequentistFit:  
+if options.toys!=0 and not options.toysBayesian and options.postfitToys:
   sess.run(dataobsassign)
   sess.run(nexpnomassign)
   minimize()
@@ -1874,7 +1874,7 @@ for itoy in range(ntoys):
     if options.randomizeStart:
       sess.run(asimovrandomizestart)
     else:
-      if not options.doRegularization:
+      if not options.doRegularization and not options.postfitToys:
         dofit = False
   elif options.toys == 0:
     print("Running fit to observed data")
